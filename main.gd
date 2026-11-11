@@ -718,6 +718,18 @@ var ghost: MeshInstance3D
 var ghost_ok := false
 
 
+static var menu_note := ""   # pesan untuk menu setelah adegan dimuat ulang
+
+
+func _open_pause() -> void:
+	var info := "Main sendiri - Hari %d" % day_index
+	if online:
+		info = ("Kamu host: keluar akan menutup server untuk semua pemain." if multiplayer.is_server()
+			else "Terhubung ke server sebagai %s." % my_name)
+	hud.show_pause(true, info)
+	audio.sfx("open")
+
+
 func _setup_audio_hud() -> void:
 	audio = preload("res://audio.gd").new()
 	add_child(audio)
@@ -733,6 +745,14 @@ func _setup_audio_hud() -> void:
 	hud.shop_closed.connect(func(): _open_shop(false))
 	hud.chat_send.connect(_send_chat)
 	hud.reset_save.connect(_reset_save)
+	hud.save_now.connect(func():
+		_save_game()
+		audio.sfx("coins")
+		hud.show_pause(true, "Permainan tersimpan (Hari %d)." % day_index))
+	hud.logout.connect(_logout)
+	hud.quit_game.connect(func():
+		_save_game()
+		get_tree().quit())
 	players_root = Node3D.new()
 	players_root.name = "Players"
 	add_child(players_root)
@@ -746,6 +766,9 @@ func _setup_audio_hud() -> void:
 	multiplayer.server_disconnected.connect(_on_server_lost)
 	hud.show_menu()
 	_show_save_info()
+	if menu_note != "":
+		hud.set_menu_status(menu_note)
+		menu_note = ""
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
 
@@ -805,6 +828,18 @@ func _on_conn_failed() -> void:
 
 
 func _on_server_lost() -> void:
+	_save_game()
+	menu_note = "Host menutup server. Kamu kembali ke menu utama."
+	multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
+	get_tree().reload_current_scene()
+
+
+func _logout() -> void:
+	# Simpan, putuskan koneksi, lalu muat ulang adegan -> kembali ke menu utama.
+	_save_game()
+	menu_note = "Kamu sudah keluar. Progres tersimpan."
+	if online and multiplayer.multiplayer_peer:
+		multiplayer.multiplayer_peer.close()
 	multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
 	get_tree().reload_current_scene()
 
@@ -1002,7 +1037,17 @@ func _unhandled_input(event: InputEvent) -> void:
 		if event.keycode in [KEY_F, KEY_ESCAPE]:
 			_open_shop(false)
 		return
+	if hud.pause_panel.visible:
+		if event.keycode == KEY_ESCAPE:
+			hud.show_pause(false)
+		return
 	if hud.chat_input.visible:
+		return
+	if event.keycode == KEY_ESCAPE:
+		if build_mode != "":
+			_set_build_mode("")
+		else:
+			_open_pause()
 		return
 	if event.keycode in [KEY_ENTER, KEY_KP_ENTER]:
 		hud.open_chat()

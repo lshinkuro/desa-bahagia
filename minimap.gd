@@ -20,6 +20,7 @@ const C_FENCE := Color(0.45, 0.3, 0.15)
 const C_WATER := Color(0.35, 0.62, 0.88)
 const C_ROOF := Color(0.82, 0.32, 0.3)
 const C_TREE := Color(0.25, 0.48, 0.2)
+const C_GOLD := Color(0.97, 0.79, 0.4)
 
 
 func _ready() -> void:
@@ -35,9 +36,18 @@ func _ready() -> void:
 	ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ring.draw.connect(func():
 		var c := ring.size / 2
-		ring.draw_arc(c, c.x - 3.5, 0, TAU, 64, C_BORDER, 7, true)
-		ring.draw_arc(c, c.x - 8, 0, TAU, 64, Color(1, 0.95, 0.82, 0.9), 2, true)
-		_text(ring, Vector2(c.x, 14), "U", 13, Color(0.6, 0.15, 0.1)))
+		var outer := _octagon(c, c.x - 3.5)
+		outer.append(outer[0])
+		ring.draw_polyline(outer, Color(0.09, 0.11, 0.15), 7, true)
+		var inner := _octagon(c, c.x - 3.5)
+		inner.append(inner[0])
+		ring.draw_polyline(inner, C_GOLD, 2.5, true)
+		var badge := Vector2(c.x, 13)
+		ring.draw_colored_polygon(_octagon(badge, 11), Color(0.09, 0.11, 0.15))
+		var bo := _octagon(badge, 11)
+		bo.append(bo[0])
+		ring.draw_polyline(bo, C_GOLD, 1.5, true)
+		_text(ring, badge, "U", 13, C_GOLD, Color(0.09, 0.11, 0.15)))
 	add_child(ring)
 	_apply_size()
 
@@ -66,9 +76,18 @@ func _process(_d: float) -> void:
 		cv.queue_redraw()
 
 
+func _octagon(c: Vector2, r: float) -> PackedVector2Array:
+	# Segi delapan "faceted", sisi datar di atas.
+	var pts := PackedVector2Array()
+	for i in 8:
+		var a := TAU * (i + 0.5) / 8.0
+		pts.append(c + Vector2(cos(a), sin(a)) * r)
+	return pts
+
+
 func _draw() -> void:
-	# Bentuk lingkaran ini sekaligus menjadi "topeng" untuk isi peta.
-	draw_circle(size / 2, size.x / 2 - 1, C_GRASS)
+	# Segi delapan ini sekaligus menjadi "topeng" untuk isi peta.
+	draw_colored_polygon(_octagon(size / 2, size.x / 2 - 1), C_GRASS)
 
 
 func w2m(p: Vector3) -> Vector2:
@@ -87,10 +106,10 @@ func _rect(center: Vector3, wsize: Vector2, col: Color, outline := Color.TRANSPA
 		cv.draw_rect(r, outline, false, 1.5)
 
 
-func _text(target: CanvasItem, pos: Vector2, t: String, fs := 11, col := Color(0.3, 0.18, 0.08)) -> void:
+func _text(target: CanvasItem, pos: Vector2, t: String, fs := 11, col := Color(0.3, 0.18, 0.08), outline := Color(1, 0.97, 0.88, 0.9)) -> void:
 	var f := get_theme_default_font()
 	var w := f.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-	target.draw_string_outline(f, pos - Vector2(w / 2, -4), t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 4, Color(1, 0.97, 0.88, 0.9))
+	target.draw_string_outline(f, pos - Vector2(w / 2, -4), t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 4, outline)
 	target.draw_string(f, pos - Vector2(w / 2, -4), t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
 
 

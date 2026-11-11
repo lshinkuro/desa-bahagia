@@ -10,8 +10,23 @@ signal shop_sell
 signal shop_closed
 signal chat_send(text: String)
 signal reset_save
+signal save_now
+signal logout
+signal quit_game
 
-const INK := Color(0.33, 0.2, 0.1)
+const PREFS := "user://settings.cfg"
+
+# Palet "poligon renaisans": batu gelap bersudut tajam + bingkai emas.
+const INK := Color(0.95, 0.9, 0.78)        # teks utama (perkamen)
+const GOLD := Color(0.97, 0.79, 0.4)       # judul
+const GOLD_DK := Color(0.66, 0.5, 0.24)    # bingkai
+const MUTED := Color(0.74, 0.7, 0.62)
+const LEAF := Color(0.6, 0.88, 0.52)
+const COIN := Color(1, 0.84, 0.32)
+const STONE := Color(0.09, 0.11, 0.15, 0.93)
+const STONE_HI := Color(0.17, 0.2, 0.26)
+const CRIMSON := Color(0.45, 0.1, 0.12, 0.95)
+const DARK_TEXT := Color(0.1, 0.08, 0.06)
 const CHARACTERS = ["Petani Budi", "Petani Sari", "Petani Joko", "Petani Rina", "Petani Dodi", "Petani Ayu"]
 const ITEM_ICONS = {"Bibit": "seed", "Kayu": "wood", "Jerami": "hay", "Sayur": "carrot", "Telur": "egg", "Susu": "carton"}
 
@@ -44,6 +59,7 @@ var name_edit: LineEdit
 var ip_edit: LineEdit
 var char_pick: OptionButton
 var font: Font
+var title_font: Font
 var minimap: Control
 var shop_panel: PanelContainer
 var shop_coin_label: Label
@@ -52,77 +68,98 @@ var chat_box: VBoxContainer
 var chat_input: LineEdit
 var chat_lines: Array = []
 var version_text := ""
+var pause_panel: PanelContainer
+var pause_info: Label
+var sliders := {}
 
 
 # ---------- tema ----------
-func _tex_box(file: String, margin: int, content: int) -> StyleBoxTexture:
-	var sb := StyleBoxTexture.new()
-	sb.texture = load("res://assets/ui/" + file)
-	sb.texture_margin_left = margin
-	sb.texture_margin_right = margin
-	sb.texture_margin_top = margin
-	sb.texture_margin_bottom = margin
-	sb.content_margin_left = content
-	sb.content_margin_right = content
-	sb.content_margin_top = content - 4
-	sb.content_margin_bottom = content - 4
+func _poly(col: Color, cut := 12, border := GOLD_DK, bw := 2, pad := 14, shadow := true) -> StyleBoxFlat:
+	# Kotak bersudut terpotong (corner_detail = 1 membuat sudut diagonal / faceted).
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = col
+	sb.set_corner_radius_all(cut)
+	sb.corner_detail = 1
+	sb.anti_aliasing = true
+	if bw > 0:
+		sb.border_color = border
+		sb.set_border_width_all(bw)
+	if shadow:
+		sb.shadow_color = Color(0, 0, 0, 0.45)
+		sb.shadow_size = 6
+		sb.shadow_offset = Vector2(0, 3)
+	sb.content_margin_left = pad + 2
+	sb.content_margin_right = pad + 2
+	sb.content_margin_top = pad
+	sb.content_margin_bottom = pad
 	return sb
 
 
 func _flat(col: Color, radius := 8, border := Color.TRANSPARENT, bw := 0) -> StyleBoxFlat:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = col
-	sb.set_corner_radius_all(radius)
-	if bw > 0:
-		sb.border_color = border
-		sb.set_border_width_all(bw)
+	var sb := _poly(col, radius, border, bw, 6, false)
 	sb.content_margin_left = 10
 	sb.content_margin_right = 10
-	sb.content_margin_top = 6
-	sb.content_margin_bottom = 6
 	return sb
 
 
-func _make_theme() -> Theme:
-	# Fredoka (Google Fonts, SIL OFL) — tebal & bulat, mudah dibaca.
-	var base: FontFile = load("res://assets/ui/fredoka.ttf")
+func _font(path: String, weight: int) -> FontVariation:
 	var fv := FontVariation.new()
-	fv.base_font = base
-	fv.variation_opentype = {"wght": 600}
-	font = fv
+	fv.base_font = load(path)
+	if weight > 0:
+		fv.variation_opentype = {"wght": weight}
+	return fv
+
+
+func _make_theme() -> Theme:
+	# Alegreya Sans (isi) & Cinzel (judul ala prasasti renaisans) — Google Fonts, SIL OFL.
+	font = _font("res://assets/ui/alegreya_sans_bold.ttf", 0)
+	title_font = _font("res://assets/ui/cinzel.ttf", 800)
 	var t := Theme.new()
 	t.default_font = font
-	t.default_font_size = 17
-	t.set_stylebox("panel", "PanelContainer", _tex_box("panel_brown.png", 20, 20))
+	t.default_font_size = 18
+	t.set_stylebox("panel", "PanelContainer", _poly(STONE, 14))
 	t.set_color("font_color", "Label", INK)
-	var b := _tex_box("button_brown.png", 12, 16)
-	var bh := b.duplicate()
-	bh.modulate_color = Color(1.15, 1.1, 1.0)
-	var bp := b.duplicate()
-	bp.modulate_color = Color(0.8, 0.75, 0.7)
-	t.set_stylebox("normal", "Button", b)
-	t.set_stylebox("hover", "Button", bh)
-	t.set_stylebox("pressed", "Button", bp)
-	t.set_stylebox("focus", "Button", StyleBoxEmpty.new())
-	t.set_color("font_color", "Button", INK)
-	t.set_color("font_hover_color", "Button", Color(0.6, 0.3, 0.05))
-	t.set_color("font_pressed_color", "Button", INK)
-	t.set_font_size("font_size", "Button", 19)
-	var le := _flat(Color(1, 0.97, 0.9), 6, Color(0.55, 0.35, 0.18), 2)
+	t.set_color("font_shadow_color", "Label", Color(0, 0, 0, 0.5))
+	t.set_constant("shadow_offset_y", "Label", 1)
+	var b := _poly(STONE_HI, 10, GOLD_DK, 2, 10)
+	var bh := _poly(Color(0.26, 0.29, 0.36), 10, GOLD, 2, 10)
+	var bp := _poly(GOLD, 10, Color(1, 0.92, 0.7), 2, 10, false)
+	var bd := _poly(Color(0.14, 0.15, 0.18, 0.8), 10, Color(0.35, 0.33, 0.3), 2, 10, false)
+	for cls in ["Button", "OptionButton"]:
+		t.set_stylebox("normal", cls, b)
+		t.set_stylebox("hover", cls, bh)
+		t.set_stylebox("pressed", cls, bp)
+		t.set_stylebox("disabled", cls, bd)
+		t.set_stylebox("focus", cls, StyleBoxEmpty.new())
+		t.set_color("font_color", cls, INK)
+		t.set_color("font_hover_color", cls, GOLD)
+		t.set_color("font_pressed_color", cls, DARK_TEXT)
+		t.set_color("font_disabled_color", cls, Color(0.55, 0.53, 0.5))
+		t.set_font("font", cls, title_font)
+		t.set_font_size("font_size", cls, 17)
+	var le := _poly(Color(0.04, 0.05, 0.07, 0.9), 8, Color(0.4, 0.35, 0.26), 2, 8, false)
 	t.set_stylebox("normal", "LineEdit", le)
-	t.set_stylebox("focus", "LineEdit", _flat(Color(1, 1, 0.95), 6, Color(0.85, 0.55, 0.2), 2))
+	t.set_stylebox("focus", "LineEdit", _poly(Color(0.06, 0.07, 0.1, 0.95), 8, GOLD, 2, 8, false))
 	t.set_color("font_color", "LineEdit", INK)
-	t.set_stylebox("normal", "OptionButton", b)
-	t.set_stylebox("hover", "OptionButton", bh)
-	t.set_stylebox("pressed", "OptionButton", bp)
-	t.set_stylebox("focus", "OptionButton", StyleBoxEmpty.new())
-	t.set_color("font_color", "OptionButton", INK)
-	t.set_color("font_hover_color", "OptionButton", Color(0.6, 0.3, 0.05))
-	t.set_stylebox("background", "ProgressBar", _flat(Color(0.3, 0.18, 0.1, 0.9), 6))
-	t.set_stylebox("slider", "HSlider", _flat(Color(0.55, 0.35, 0.18), 4))
-	t.set_stylebox("grabber_area", "HSlider", _flat(Color(0.9, 0.6, 0.2), 4))
-	t.set_stylebox("grabber_area_highlight", "HSlider", _flat(Color(1, 0.7, 0.3), 4))
+	t.set_color("font_placeholder_color", "LineEdit", Color(0.6, 0.58, 0.52, 0.7))
+	t.set_color("caret_color", "LineEdit", GOLD)
+	t.set_stylebox("background", "ProgressBar", _poly(Color(0.03, 0.04, 0.06, 0.95), 5, Color(0.35, 0.3, 0.22), 1, 0, false))
+	t.set_stylebox("slider", "HSlider", _poly(Color(0.03, 0.04, 0.06), 4, GOLD_DK, 1, 3, false))
+	t.set_stylebox("grabber_area", "HSlider", _poly(GOLD_DK, 4, Color.TRANSPARENT, 0, 3, false))
+	t.set_stylebox("grabber_area_highlight", "HSlider", _poly(GOLD, 4, Color.TRANSPARENT, 0, 3, false))
+	t.set_stylebox("panel", "PopupMenu", _poly(STONE, 8))
+	t.set_color("font_color", "PopupMenu", INK)
+	t.set_color("font_hover_color", "PopupMenu", GOLD)
+	t.set_stylebox("hover", "PopupMenu", _poly(STONE_HI, 6, GOLD_DK, 1, 4, false))
+	t.set_stylebox("panel", "TooltipPanel", _poly(STONE, 6, GOLD_DK, 1, 6, false))
+	t.set_color("font_color", "TooltipLabel", INK)
 	return t
+
+
+func _title(text: String, size := 18, col := GOLD) -> Label:
+	var l := _label(text, size, col)
+	l.add_theme_font_override("font", title_font)
+	return l
 
 
 func _label(text: String, size := 17, col := INK, outline := false) -> Label:
@@ -131,7 +168,7 @@ func _label(text: String, size := 17, col := INK, outline := false) -> Label:
 	l.add_theme_font_size_override("font_size", size)
 	l.add_theme_color_override("font_color", col)
 	if outline:
-		l.add_theme_color_override("font_outline_color", Color(0.15, 0.08, 0.03))
+		l.add_theme_color_override("font_outline_color", Color(0.04, 0.03, 0.02))
 		l.add_theme_constant_override("outline_size", maxi(4, int(size * 0.3)))
 	return l
 
@@ -149,7 +186,7 @@ func _bar(col: Color, height := 14) -> ProgressBar:
 	var pb := ProgressBar.new()
 	pb.show_percentage = false
 	pb.custom_minimum_size = Vector2(0, height)
-	pb.add_theme_stylebox_override("fill", _flat(col, 6))
+	pb.add_theme_stylebox_override("fill", _poly(col, 5, col.lightened(0.35), 1, 0, false))
 	return pb
 
 
@@ -176,7 +213,9 @@ func setup(audio_node: Node) -> void:
 	_build_build_panel()
 	_build_shop()
 	_build_chat()
+	_build_pause()
 	_build_menu()
+	_load_prefs()
 
 
 func _build_hud() -> void:
@@ -194,13 +233,13 @@ func _build_hud() -> void:
 	var cv := VBoxContainer.new()
 	cv.add_theme_constant_override("separation", 0)
 	clock.add_child(cv)
-	day_label = _label("Hari 1", 16, Color(0.6, 0.3, 0.12))
+	day_label = _title("Hari 1", 15)
 	cv.add_child(day_label)
-	time_label = _label("06:00", 34)
+	time_label = _title("06:00", 34, INK)
 	cv.add_child(time_label)
 	var coin_row := HBoxContainer.new()
 	coin_row.add_child(_icon("coin", 26))
-	coin_label = _label("0", 22, Color(0.75, 0.5, 0.05))
+	coin_label = _label("0", 22, COIN)
 	coin_row.add_child(coin_label)
 	cv.add_child(coin_row)
 
@@ -212,7 +251,7 @@ func _build_hud() -> void:
 	var mv := VBoxContainer.new()
 	mv.add_theme_constant_override("separation", 4)
 	mp.add_child(mv)
-	mv.add_child(_label("MISI UTAMA", 15, Color(0.7, 0.25, 0.15)))
+	mv.add_child(_title("MISI UTAMA", 15))
 	story_label = _label("", 17)
 	story_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	story_label.custom_minimum_size = Vector2(300, 0)
@@ -220,9 +259,12 @@ func _build_hud() -> void:
 	story_bar = _bar(Color(0.95, 0.65, 0.2), 10)
 	mv.add_child(story_bar)
 	var sep := HSeparator.new()
-	sep.add_theme_stylebox_override("separator", _flat(Color(0.6, 0.4, 0.2, 0.5), 1))
+	var line := StyleBoxLine.new()
+	line.color = Color(GOLD_DK, 0.6)
+	line.thickness = 1
+	sep.add_theme_stylebox_override("separator", line)
 	mv.add_child(sep)
-	mv.add_child(_label("MISI HARIAN", 15, Color(0.2, 0.45, 0.2)))
+	mv.add_child(_title("MISI HARIAN", 15, LEAF))
 	daily_box = VBoxContainer.new()
 	mv.add_child(daily_box)
 
@@ -249,7 +291,7 @@ func _build_hud() -> void:
 		var l := _label(item[1], 15)
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(l)
-		var pct := _label("0%", 14, Color(0.5, 0.35, 0.2))
+		var pct := _label("0%", 14, MUTED)
 		row.add_child(pct)
 		sv.add_child(row)
 		var pb := _bar(item[2])
@@ -267,7 +309,7 @@ func _build_hud() -> void:
 	hud.add_child(hb)
 	for item in ITEM_ICONS:
 		var slot := PanelContainer.new()
-		slot.add_theme_stylebox_override("panel", _tex_box("panel_brown.png", 18, 12))
+		slot.add_theme_stylebox_override("panel", _poly(STONE, 12, GOLD_DK, 2, 4))
 		slot.custom_minimum_size = Vector2(76, 76)
 		hb.add_child(slot)
 		var ov := Control.new()
@@ -285,7 +327,7 @@ func _build_hud() -> void:
 
 	# Petunjuk aksi di atas tas.
 	prompt_panel = PanelContainer.new()
-	prompt_panel.add_theme_stylebox_override("panel", _flat(Color(0.12, 0.07, 0.03, 0.75), 18))
+	prompt_panel.add_theme_stylebox_override("panel", _poly(Color(0.05, 0.06, 0.09, 0.85), 14, GOLD_DK, 2, 8))
 	prompt_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
 	prompt_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	prompt_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
@@ -294,8 +336,8 @@ func _build_hud() -> void:
 	var ph := HBoxContainer.new()
 	ph.add_theme_constant_override("separation", 10)
 	prompt_panel.add_child(ph)
-	var key := _label("F", 18, INK)
-	key.add_theme_stylebox_override("normal", _flat(Color(1, 0.95, 0.8), 6, Color(0.6, 0.4, 0.2), 2))
+	var key := _title("F", 17, DARK_TEXT)
+	key.add_theme_stylebox_override("normal", _flat(GOLD, 6, Color(1, 0.93, 0.7), 2))
 	key.name = "Key"
 	ph.add_child(key)
 	prompt_label = _label("", 19, Color(1, 0.96, 0.85))
@@ -304,13 +346,13 @@ func _build_hud() -> void:
 
 	# Notifikasi (spanduk merah).
 	toast_panel = PanelContainer.new()
-	toast_panel.add_theme_stylebox_override("panel", _tex_box("banner_hanging.png", 40, 40))
+	toast_panel.add_theme_stylebox_override("panel", _poly(CRIMSON, 18, GOLD, 3, 14))
 	toast_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
 	toast_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	toast_panel.offset_top = 16
-	toast_panel.custom_minimum_size = Vector2(380, 70)
+	toast_panel.custom_minimum_size = Vector2(380, 0)
 	hud.add_child(toast_panel)
-	toast_label = _label("", 20, Color(1, 0.97, 0.88), true)
+	toast_label = _title("", 19, Color(1, 0.93, 0.75))
 	toast_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	toast_panel.add_child(toast_label)
 	toast_panel.modulate.a = 0
@@ -322,7 +364,7 @@ func _build_hud() -> void:
 	big_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
 	big_panel.custom_minimum_size = Vector2(520, 0)
 	hud.add_child(big_panel)
-	big_label = _label("", 30, Color(0.65, 0.3, 0.1))
+	big_label = _title("", 28)
 	big_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	big_panel.add_child(big_label)
 	big_panel.visible = false
@@ -346,7 +388,7 @@ func _build_hud() -> void:
 	help_panel.offset_left = 16
 	help_panel.offset_bottom = -14
 	hud.add_child(help_panel)
-	help_panel.add_child(_label("WASD  jalan\nSpasi  lompat\nF  aksi / tebang pohon\nB  menu bangun\nM  peta besar/kecil\nEnter  chat\nMouse / Q E  kamera\nT (tahan)  percepat waktu*\nH  sembunyikan bantuan\nEsc  lepas mouse\n* hanya host", 14))
+	help_panel.add_child(_label("WASD  jalan\nSpasi  lompat\nF  aksi / tebang pohon\nB  menu bangun\nM  peta besar/kecil\nEnter  chat\nMouse / Q E  kamera\nT (tahan)  percepat waktu*\nH  sembunyikan bantuan\nEsc  menu jeda / keluar\n* hanya host", 14))
 
 
 func _build_build_panel() -> void:
@@ -359,7 +401,7 @@ func _build_build_panel() -> void:
 	hud.add_child(build_panel)
 	var v := VBoxContainer.new()
 	build_panel.add_child(v)
-	v.add_child(_label("MENU BANGUN", 16, Color(0.6, 0.3, 0.12)))
+	v.add_child(_title("MENU BANGUN", 16))
 	build_label = _label("", 16)
 	v.add_child(build_label)
 	build_panel.visible = false
@@ -381,7 +423,7 @@ func _build_menu() -> void:
 	menu.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	root.add_child(menu)
 	var dim := ColorRect.new()
-	dim.color = Color(0.05, 0.03, 0.02, 0.35)
+	dim.color = Color(0.02, 0.03, 0.06, 0.45)
 	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	menu.add_child(dim)
 
@@ -389,15 +431,17 @@ func _build_menu() -> void:
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	menu.add_child(center)
 	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", -8)
+	col.add_theme_constant_override("separation", -10)
 	center.add_child(col)
 
 	var banner := PanelContainer.new()
-	banner.add_theme_stylebox_override("panel", _tex_box("banner_classic_curtain.png", 46, 46))
+	banner.add_theme_stylebox_override("panel", _poly(CRIMSON, 26, GOLD, 3, 18))
 	banner.custom_minimum_size = Vector2(520, 100)
 	banner.z_index = 1
 	col.add_child(banner)
-	var title := _label("DESA BAHAGIA", 42, Color(1, 0.95, 0.8), true)
+	var title := _title("DESA BAHAGIA", 44, Color(1, 0.88, 0.55))
+	title.add_theme_color_override("font_outline_color", Color(0.15, 0.03, 0.03))
+	title.add_theme_constant_override("outline_size", 8)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	banner.add_child(title)
 
@@ -408,7 +452,7 @@ func _build_menu() -> void:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 10)
 	panel.add_child(v)
-	var sub := _label("Rawat hewan, panen sayur, dan selesaikan misi bersama teman!", 15, Color(0.5, 0.32, 0.15))
+	var sub := _label("Rawat hewan, panen sayur, dan selesaikan misi bersama teman!", 15, MUTED)
 	sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(sub)
@@ -430,20 +474,20 @@ func _build_menu() -> void:
 	char_pick.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	grid.add_child(char_pick)
 
-	v.add_child(_button("Main Sendiri", func(): play_single.emit(_name(), char_pick.selected)))
-	v.add_child(_button("Buat Server (Host)", func(): play_host.emit(_name(), char_pick.selected)))
+	v.add_child(_button("Main Sendiri", func(): _save_prefs(); play_single.emit(_name(), char_pick.selected)))
+	v.add_child(_button("Buat Server (Host)", func(): _save_prefs(); play_host.emit(_name(), char_pick.selected)))
 	var jr := HBoxContainer.new()
 	ip_edit = LineEdit.new()
 	ip_edit.text = "127.0.0.1"
 	ip_edit.placeholder_text = "Alamat IP host"
 	ip_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	jr.add_child(ip_edit)
-	var jb := _button("Gabung", func(): play_join.emit(_name(), char_pick.selected, ip_edit.text.strip_edges()))
+	var jb := _button("Gabung", func(): _save_prefs(); play_join.emit(_name(), char_pick.selected, ip_edit.text.strip_edges()))
 	jb.custom_minimum_size = Vector2(130, 46)
 	jr.add_child(jb)
 	v.add_child(jr)
 
-	menu_status = _label("", 14, Color(0.55, 0.25, 0.1))
+	menu_status = _label("", 14, Color(1, 0.8, 0.55))
 	menu_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	menu_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(menu_status)
@@ -461,7 +505,10 @@ func _build_menu() -> void:
 		s.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		s.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		var bus_name: String = bus[0]
-		s.value_changed.connect(func(val): volume_changed.emit(bus_name, val))
+		s.value_changed.connect(func(val):
+			volume_changed.emit(bus_name, val)
+			_save_prefs())
+		sliders[bus_name] = s
 		row.add_child(s)
 		v.add_child(row)
 
@@ -469,12 +516,12 @@ func _build_menu() -> void:
 	rb.text = "Hapus data simpanan"
 	rb.flat = true
 	rb.add_theme_font_size_override("font_size", 13)
-	rb.add_theme_color_override("font_color", Color(0.65, 0.3, 0.15))
+	rb.add_theme_color_override("font_color", Color(0.95, 0.55, 0.45))
 	rb.pressed.connect(func():
 		if audio: audio.sfx("click")
 		reset_save.emit())
 	v.add_child(rb)
-	var credit := _label("v%s  -  Aset: Kenney.nl & OpenGameArt (CC0)" % ProjectSettings.get_setting("application/config/version", "1.0"), 12, Color(0.55, 0.4, 0.25))
+	var credit := _label("v%s  -  Aset: Kenney.nl & OpenGameArt (CC0)" % ProjectSettings.get_setting("application/config/version", "1.0"), 12, MUTED)
 	credit.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(credit)
 
@@ -503,7 +550,7 @@ func set_menu_status(text: String) -> void:
 func set_clock(day: int, hours: float, is_day: bool, coins: int) -> void:
 	day_label.text = "HARI %d  -  %s" % [day, "SIANG" if is_day else "MALAM"]
 	time_label.text = "%02d:%02d" % [int(hours), int(fmod(hours, 1.0) * 60)]
-	time_label.add_theme_color_override("font_color", INK if is_day else Color(0.25, 0.3, 0.55))
+	time_label.add_theme_color_override("font_color", INK if is_day else Color(0.65, 0.75, 1))
 	coin_label.text = str(coins)
 
 
@@ -531,19 +578,19 @@ func set_daily(list: Array) -> void:
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 6)
 		var box := Label.new()
-		box.text = "v" if d.done else ""
+		box.text = "✓" if d.done else ""
 		box.custom_minimum_size = Vector2(22, 22)
 		box.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		box.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		box.add_theme_color_override("font_color", Color(0.2, 0.55, 0.2))
-		box.add_theme_stylebox_override("normal", _flat(Color(1, 0.97, 0.88), 4, Color(0.55, 0.35, 0.18), 2))
+		box.add_theme_color_override("font_color", LEAF)
+		box.add_theme_stylebox_override("normal", _poly(Color(0.03, 0.04, 0.06), 4, GOLD_DK, 2, 0, false))
 		row.add_child(box)
 		var t := _label("%s  (%d/%d)" % [d.text % d.goal, mini(d.count, d.goal), d.goal], 15,
-			Color(0.45, 0.6, 0.4) if d.done else INK)
+			Color(0.5, 0.72, 0.5) if d.done else INK)
 		t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(t)
 		row.add_child(_icon("coin", 18))
-		row.add_child(_label(str(d.reward), 15, Color(0.75, 0.5, 0.05)))
+		row.add_child(_label(str(d.reward), 15, COIN))
 		daily_box.add_child(row)
 
 
@@ -600,16 +647,16 @@ func _build_shop() -> void:
 	v.add_theme_constant_override("separation", 8)
 	shop_panel.add_child(v)
 	var top := HBoxContainer.new()
-	var t := _label("KIOS DESA", 24, Color(0.65, 0.28, 0.1))
+	var t := _title("KIOS DESA", 24)
 	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top.add_child(t)
 	top.add_child(_icon("coin", 24))
-	shop_coin_label = _label("0", 22, Color(0.75, 0.5, 0.05))
+	shop_coin_label = _label("0", 22, COIN)
 	top.add_child(shop_coin_label)
 	v.add_child(top)
 	shop_sell_btn = _button("Jual semua hasil panen", func(): shop_sell.emit())
 	v.add_child(shop_sell_btn)
-	v.add_child(_label("BELI", 15, Color(0.2, 0.45, 0.2)))
+	v.add_child(_title("BELI", 15, LEAF))
 	for item in [["seed", "seed", "Bibit Sayur", "Tanam di petak kebunmu", 5],
 			["bread", "bread", "Roti Hangat", "Langsung dimakan: energi +40", 10],
 			["chicken", "egg", "Ayam Baru", "Lebih banyak ayam = lebih cepat bertelur", 40],
@@ -621,11 +668,11 @@ func _build_shop() -> void:
 		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		info.add_theme_constant_override("separation", -2)
 		info.add_child(_label(item[2], 18))
-		info.add_child(_label(item[3], 13, Color(0.5, 0.35, 0.2)))
+		info.add_child(_label(item[3], 13, MUTED))
 		row.add_child(info)
 		var price := HBoxContainer.new()
 		price.add_child(_icon("coin", 18))
-		price.add_child(_label(str(item[4]), 17, Color(0.75, 0.5, 0.05)))
+		price.add_child(_label(str(item[4]), 17, COIN))
 		row.add_child(price)
 		var id: String = item[0]
 		var b := _button("Beli", func(): shop_buy.emit(id))
@@ -645,7 +692,7 @@ func show_shop(open: bool, coins := 0, sell_value := 0, sell_count := 0) -> void
 
 
 func is_busy() -> bool:
-	return shop_panel.visible or chat_input.visible
+	return shop_panel.visible or chat_input.visible or pause_panel.visible
 
 
 # ---------- chat ----------
@@ -696,3 +743,66 @@ func add_chat(who: String, text: String, system := false) -> void:
 	chat_lines.append([l, 14.0])
 	while chat_lines.size() > 7:
 		chat_lines.pop_front()[0].queue_free()
+
+
+# ---------- menu jeda (Esc) ----------
+func _build_pause() -> void:
+	pause_panel = PanelContainer.new()
+	pause_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	pause_panel.add_theme_stylebox_override("panel", _poly(Color(0.01, 0.02, 0.04, 0.6), 0, Color.TRANSPARENT, 0, 0, false))
+	hud.add_child(pause_panel)
+	var center := CenterContainer.new()
+	pause_panel.add_child(center)
+	var box := PanelContainer.new()
+	box.custom_minimum_size = Vector2(380, 0)
+	box.add_theme_stylebox_override("panel", _poly(STONE, 22, GOLD, 3, 22))
+	center.add_child(box)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 10)
+	box.add_child(v)
+	var t := _title("JEDA", 32)
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(t)
+	pause_info = _label("", 15, MUTED)
+	pause_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	pause_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(pause_info)
+	v.add_child(_button("Lanjutkan", func(): show_pause(false)))
+	v.add_child(_button("Simpan Sekarang", func(): save_now.emit()))
+	v.add_child(_button("Keluar ke Menu Utama", func(): logout.emit()))
+	var q := _button("Tutup Game", func(): quit_game.emit())
+	q.add_theme_stylebox_override("normal", _poly(Color(0.32, 0.08, 0.09), 10, GOLD_DK, 2, 10))
+	q.add_theme_stylebox_override("hover", _poly(Color(0.45, 0.12, 0.13), 10, GOLD, 2, 10))
+	v.add_child(q)
+	pause_panel.visible = false
+
+
+func show_pause(open: bool, info := "") -> void:
+	pause_panel.visible = open
+	if info != "":
+		pause_info.text = info
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if open else Input.MOUSE_MODE_CAPTURED
+
+
+# ---------- preferensi menu (nama, karakter, IP, volume) ----------
+func _save_prefs() -> void:
+	var cf := ConfigFile.new()
+	cf.set_value("menu", "name", name_edit.text)
+	cf.set_value("menu", "model", char_pick.selected)
+	cf.set_value("menu", "ip", ip_edit.text)
+	for bus in sliders:
+		cf.set_value("audio", bus, sliders[bus].value)
+	cf.save(PREFS)
+
+
+func _load_prefs() -> void:
+	var cf := ConfigFile.new()
+	if cf.load(PREFS) != OK:
+		return
+	name_edit.text = str(cf.get_value("menu", "name", name_edit.text))
+	char_pick.select(clampi(int(cf.get_value("menu", "model", 0)), 0, CHARACTERS.size() - 1))
+	ip_edit.text = str(cf.get_value("menu", "ip", ip_edit.text))
+	for bus in sliders:
+		var val := float(cf.get_value("audio", bus, sliders[bus].value))
+		sliders[bus].set_value_no_signal(val)
+		if audio: audio.set_volume(bus, val)
