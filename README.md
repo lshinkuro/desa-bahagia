@@ -45,6 +45,12 @@ Berjalan di Mac Intel maupun Apple Silicon (universal).
 2. Teman di WiFi yang sama mengetik IP tersebut lalu **Gabung**.
 3. Main lewat internet butuh port forwarding UDP **7777** di router host.
 
+### Main bareng beda WiFi (Tailscale)
+1. Host & teman install [Tailscale](https://tailscale.com) (gratis), login, lalu host mengundang teman ke jaringannya.
+2. Host klik **Buat Server** — game menampilkan IP `Tailscale: 100.x.x.x` (juga muncul di chat & menu Esc).
+3. Teman memasukkan IP `100.x.x.x` itu di kolom **Gabung**.
+4. Pastikan semua memakai versi game yang sama. Jika macOS menanyakan izin koneksi masuk, pilih **Allow**.
+
 ## Membuat versi baru (DMG otomatis)
 
 Setiap tag versi yang di-push akan dibangun otomatis oleh GitHub Actions

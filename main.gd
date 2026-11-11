@@ -724,7 +724,7 @@ static var menu_note := ""   # pesan untuk menu setelah adegan dimuat ulang
 func _open_pause() -> void:
 	var info := "Main sendiri - Hari %d" % day_index
 	if online:
-		info = ("Kamu host: keluar akan menutup server untuk semua pemain." if multiplayer.is_server()
+		info = ("Kamu host. IP untuk teman:\n%s\nKeluar akan menutup server untuk semua pemain." % _ip_text() if multiplayer.is_server()
 			else "Terhubung ke server sebagai %s." % my_name)
 	hud.show_pause(true, info)
 	audio.sfx("open")
@@ -776,11 +776,34 @@ func _host() -> bool:
 	return not online or multiplayer.is_server()
 
 
-func _local_ip() -> String:
+func _host_ips() -> Dictionary:
+	# "lan": alamat WiFi/router rumah; "vpn": alamat Tailscale (100.64.0.0/10).
+	var out := {"lan": [], "vpn": []}
 	for a in IP.get_local_addresses():
-		if a.begins_with("192.168.") or a.begins_with("10.") or a.begins_with("172."):
-			return a
-	return "127.0.0.1"
+		if ":" in a:
+			continue
+		var p := a.split(".")
+		if p.size() != 4:
+			continue
+		var o1 := int(p[0])
+		var o2 := int(p[1])
+		if o1 == 100 and o2 >= 64 and o2 <= 127:
+			out.vpn.append(a)
+		elif o1 == 192 and o2 == 168 or o1 == 10 or o1 == 172 and o2 >= 16 and o2 <= 31:
+			out.lan.append(a)
+	return out
+
+
+func _ip_text() -> String:
+	var ips := _host_ips()
+	var lines := []
+	if not ips.lan.is_empty():
+		lines.append("WiFi sama: %s" % ips.lan[0])
+	if not ips.vpn.is_empty():
+		lines.append("Tailscale: %s" % ips.vpn[0])
+	if lines.is_empty():
+		lines.append("127.0.0.1 (komputer ini saja)")
+	return "\n".join(lines)
 
 
 func _on_single(n: String, m: int) -> void:
@@ -801,7 +824,9 @@ func _on_host(n: String, m: int) -> void:
 	my_name = n
 	my_model = m
 	_start_game()
-	hud.big_message("Server aktif!\nTeman bisa gabung ke IP: %s" % _local_ip(), 6)
+	hud.big_message("Server aktif! Teman bisa gabung ke IP:\n%s" % _ip_text(), 8)
+	for line in _ip_text().split("\n"):
+		hud.add_chat("", "IP server - " + line, true)
 
 
 func _on_join(n: String, m: int, ip: String) -> void:
