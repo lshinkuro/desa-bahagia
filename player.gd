@@ -26,6 +26,9 @@ var step_timer := 0.0
 var send_timer := 0.0
 var current_anim := "idle"
 var name_label: Label3D
+var cam: Camera3D
+var cam_locked := false   # true saat di dalam bangunan (kamera tetap)
+var floor_y := 0.0
 # Data jaringan untuk pemain lain.
 var net_pos := Vector3.ZERO
 var net_rot := 0.0
@@ -66,7 +69,7 @@ func _ready() -> void:
 		spring.spring_length = 6.0
 		spring.add_excluded_object(get_rid())
 		pivot.add_child(spring)
-		var cam := Camera3D.new()
+		cam = Camera3D.new()
 		spring.add_child(cam)
 		cam.current = true
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
@@ -93,7 +96,7 @@ func set_display_name(n: String) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if not is_local or not input_enabled:
 		return
-	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and not cam_locked:
 		cam_yaw -= event.relative.x * 0.005
 		cam_pitch = clamp(cam_pitch - event.relative.y * 0.005, -1.2, 0.3)
 	elif event is InputEventMouseButton and event.pressed:
@@ -108,13 +111,16 @@ func _play(want: String) -> void:
 
 func _physics_process(delta: float) -> void:
 	if not is_local:
-		global_position = global_position.lerp(net_pos, minf(1.0, delta * 12))
+		if global_position.distance_to(net_pos) > 12:
+			global_position = net_pos   # pindah tempat (masuk/keluar bangunan)
+		else:
+			global_position = global_position.lerp(net_pos, minf(1.0, delta * 12))
 		model.rotation.y = lerp_angle(model.rotation.y, net_rot, minf(1.0, delta * 12))
 		_play(net_anim)
 		return
 
-	if input_enabled and Input.is_key_pressed(KEY_Q): cam_yaw += 2.0 * delta
-	if input_enabled and Input.is_key_pressed(KEY_E): cam_yaw -= 2.0 * delta
+	if input_enabled and not cam_locked and Input.is_key_pressed(KEY_Q): cam_yaw += 2.0 * delta
+	if input_enabled and not cam_locked and Input.is_key_pressed(KEY_E): cam_yaw -= 2.0 * delta
 	pivot.rotation = Vector3(cam_pitch, cam_yaw, 0)
 
 	if not is_on_floor():
@@ -156,8 +162,9 @@ func _physics_process(delta: float) -> void:
 			step_timer = 0.45 if speed_mult < 1.0 else 0.3
 			footstep.emit()
 
-	if global_position.y < -10:
+	if global_position.y < floor_y - 10:
 		global_position = start_pos
+		floor_y = 0.0
 		velocity = Vector3.ZERO
 
 	# Kirim posisi ke pemain lain (20x per detik).

@@ -171,13 +171,14 @@ func _draw_content() -> void:
 	_text(cv, w2m(Vector3(-37, 0, -22)), "Jerami", fs)
 	_text(cv, w2m(Vector3(-16, 0, -20.5)), "Ayam", fs)
 	_text(cv, w2m(Vector3(5.5, 0, -7.5)), "Kios", fs)
+	_text(cv, w2m(Vector3(8.5, 0, -14)), "Bengkel", fs)
 	_text(cv, w2m(main.POND + Vector3(0, 0, 8)), "Kolam", fs)
 	_text(cv, w2m(main.HOME_DOOR + Vector3(-4, 0, -4)), "Rumahmu", fs, Color(0.6, 0.2, 0.1))
 
 	# Pemain lain (titik biru).
 	if main.players_root:
 		for p in main.players_root.get_children():
-			if p == main.player:
+			if p == main.player or p.global_position.y < -20:
 				continue
 			var m := w2m(p.global_position)
 			cv.draw_circle(m, 4.5, Color(0.25, 0.5, 0.95))

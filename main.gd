@@ -11,11 +11,43 @@ const MISSIONS = [
 	{"key": "feed_chicken", "goal": 1, "text": "Beri sayur ke ayam di kandang"},
 	{"key": "egg", "goal": 2, "text": "Ambil telur di kandang ayam"},
 	{"key": "milk", "goal": 2, "text": "Perah susu sapi (sapi harus kenyang & senang)"},
-	{"key": "sleep", "goal": 1, "text": "Tidur di rumahmu saat malam"},
+	{"key": "sleep", "goal": 1, "text": "Masuk rumahmu & tidur di kasur saat malam"},
 	{"key": "wood", "goal": 5, "text": "Tebang pohon untuk mengumpulkan kayu"},
 	{"key": "build_plot", "goal": 1, "text": "Bangun petak kebun sendiri (tekan B)"},
 	{"key": "build_house", "goal": 1, "text": "Bangun rumah kayu (tekan B, butuh 15 kayu + 30 koin)"},
+	{"key": "craft", "goal": 1, "text": "Masuk bengkel & rakit pekakas di meja kerja"},
+	{"key": "cook", "goal": 1, "text": "Masak hidangan di kompor rumahmu"},
+	{"key": "eat_dish", "goal": 1, "text": "Makan masakanmu di meja makan"},
+	{"key": "bath", "goal": 1, "text": "Mandi di bak mandi rumahmu"},
 ]
+const WORKSHOP_DOOR = Vector3(3.6, 0, -11.25)
+const HOME_IN = Vector3(0, -60, 0)       # ruang dalam rumah (di bawah dunia)
+const WORK_IN = Vector3(40, -60, 0)      # ruang dalam bengkel
+const SEASON_DAYS := 3
+const SEASONS = [
+	{"name": "Musim Semi", "short": "Semi", "col": Color(1, 0.72, 0.82), "grow": 1.0, "drain": 1.0,
+		"msg": "Bunga bermekaran. Waktunya menanam!"},
+	{"name": "Musim Panas", "short": "Panas", "col": Color(1, 0.85, 0.3), "grow": 1.5, "drain": 1.3,
+		"msg": "Tanaman tumbuh lebih cepat, tapi energi cepat habis."},
+	{"name": "Musim Gugur", "short": "Gugur", "col": Color(1, 0.58, 0.28), "grow": 1.0, "drain": 1.0,
+		"msg": "Panen raya! Setiap panen dapat sayur tambahan."},
+	{"name": "Musim Dingin", "short": "Dingin", "col": Color(0.72, 0.86, 1), "grow": 0.4, "drain": 1.2,
+		"msg": "Salju turun. Tanaman tumbuh lambat & sapi cepat lapar."},
+]
+const RECIPES = {
+	"omelet": {"name": "Telur Dadar", "need": {"Telur": 2}, "energy": 25, "icon": "dish_omelet"},
+	"salad": {"name": "Salad Kebun", "need": {"Sayur": 3}, "energy": 30, "icon": "dish_salad"},
+	"soup": {"name": "Sup Sayur Hangat", "need": {"Sayur": 2, "Susu": 1}, "energy": 45, "icon": "dish_soup"},
+	"pudding": {"name": "Puding Susu", "need": {"Susu": 2, "Telur": 1}, "energy": 40, "icon": "dish_pudding"},
+}
+const TOOLS = {
+	"axe": {"name": "Kapak", "need": {"Kayu": 3}, "coins": 0, "icon": "tool_axe",
+		"desc": "Tebang pohon: kayu +2 & lebih hemat energi"},
+	"hoe": {"name": "Cangkul", "need": {"Kayu": 4}, "coins": 15, "icon": "tool_hoe",
+		"desc": "Panen sayur: hasil +1"},
+	"bucket": {"name": "Ember Siram", "need": {"Kayu": 3}, "coins": 10, "icon": "tool_bucket",
+		"desc": "Siram tanaman yang tumbuh: 2x lebih cepat"},
+}
 const HOME_DOOR = Vector3(-3.6, 0, 11.25)
 const HAY_SPOT = Vector3(-31.7, 0, -15.5)
 const COOP_SPOT = Vector3(-18, 0, -14)
@@ -30,6 +62,10 @@ var energy := 100.0
 var chicken_hunger := 20.0
 var egg_timer := 10.0
 var inv := {"Bibit": 3, "Kayu": 0, "Jerami": 0, "Sayur": 0, "Telur": 0, "Susu": 0}
+var hygiene := 100.0
+var dishes := {"omelet": 0, "salad": 0, "soup": 0, "pudding": 0}
+var tools_owned: Array = []
+var tool := ""
 var crops: Array = []
 var egg_meshes: Array = []
 var eggs := 0
@@ -77,7 +113,10 @@ func _ready() -> void:
 	_make_decor()
 	_make_scenery()
 	_spawn_apples()
+	_make_interiors()
+	_make_weather()
 	_setup_audio_hud()
+	_apply_season(true)
 
 
 # ---------- helper ----------
@@ -151,6 +190,9 @@ func model(path: String, pos: Vector3, s := 1.0, rot := 0.0, parent: Node = self
 
 
 var _mat_cache := {}
+var foliage: Array = []     # [material, warna asli] untuk pewarnaan musim
+var ground_mi: MeshInstance3D
+var ground_mats: Array = []
 func _fix_mat(m: Material) -> Material:
 	# Palet Nature Kit hijau-kebiruan & unlit: geser ke hijau hangat dan aktifkan cahaya.
 	if not (m is BaseMaterial3D):
@@ -169,6 +211,7 @@ func _fix_mat(m: Material) -> Material:
 	elif c.h > 0.36 and c.h < 0.62 and c.s > 0.15:
 		var t := (c.h - 0.36) / 0.26
 		out.albedo_color = Color.from_hsv(lerpf(0.2, 0.3, t), clampf(c.s * 1.25, 0, 1), c.v * 0.72)
+		foliage.append([out, out.albedo_color])
 	_mat_cache[m] = out
 	return out
 
@@ -303,7 +346,12 @@ func _make_ground() -> void:
 	pm.size = Vector2(240, 240)
 	var mi := MeshInstance3D.new()
 	mi.mesh = pm
-	mi.material_override = noise_mat(Color(0.28, 0.48, 0.14), Color(0.46, 0.62, 0.22), 30)
+	ground_mats = [noise_mat(Color(0.28, 0.48, 0.14), Color(0.46, 0.62, 0.22), 30),
+		noise_mat(Color(0.36, 0.5, 0.14), Color(0.56, 0.62, 0.2), 30),
+		noise_mat(Color(0.42, 0.36, 0.13), Color(0.62, 0.5, 0.2), 30),
+		noise_mat(Color(0.82, 0.86, 0.92), Color(0.97, 0.98, 1.0), 30)]
+	mi.material_override = ground_mats[0]
+	ground_mi = mi
 	add_child(mi)
 	collider(Vector3(0, -0.5, 0), Vector3(240, 1, 240))
 
@@ -340,6 +388,9 @@ func _make_houses() -> void:
 	var home := _status_label(self, HOME_DOOR + Vector3(-1.2, 6.8, 0))
 	home.text = "Rumahmu"
 	home.modulate = Color(1, 0.9, 0.5)
+	var ws := _status_label(self, Vector3(8.5, 6.8, -10))
+	ws.text = "Bengkel"
+	ws.modulate = Color(1, 0.9, 0.5)
 
 
 func _house(pos: Vector3, rot: float, wood: bool, s := S_HOUSE, w := 2, d := 3) -> Node3D:
@@ -624,6 +675,7 @@ func _make_scenery() -> void:
 		hill.rings = 7
 		var hm := add_mesh(self, hill, Vector3(cos(a) * r, -4, sin(a) * r),
 			Color(0.25, 0.48, 0.2).lerp(Color(0.45, 0.62, 0.3), rng.randf()))
+		foliage.append([hm.material_override, hm.material_override.albedo_color])
 		hm.scale = Vector3(rng.randf_range(25, 40), rng.randf_range(12, 26), rng.randf_range(25, 40))
 		hm.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var cloud_mat := StandardMaterial3D.new()
@@ -691,6 +743,9 @@ const DAILY_POOL = [
 	{"key": "sell", "goal": 5, "text": "Jual %d barang di kios", "reward": 35},
 	{"key": "wood", "goal": 6, "text": "Kumpulkan %d kayu", "reward": 20},
 	{"key": "build", "goal": 1, "text": "Bangun %d bangunan", "reward": 30},
+	{"key": "cook", "goal": 2, "text": "Masak %d hidangan", "reward": 30},
+	{"key": "bath", "goal": 1, "text": "Mandi %d kali", "reward": 15},
+	{"key": "water", "goal": 4, "text": "Siram %d tanaman", "reward": 25},
 ]
 const BUILD_COST = {"plot": {"Kayu": 2, "coins": 0}, "house": {"Kayu": 15, "coins": 30}}
 const PRICES = {"Telur": 5, "Susu": 10, "Sayur": 3}
@@ -745,6 +800,8 @@ func _setup_audio_hud() -> void:
 	hud.shop_closed.connect(func(): _open_shop(false))
 	hud.chat_send.connect(_send_chat)
 	hud.reset_save.connect(_reset_save)
+	hud.pick_chosen.connect(_on_pick)
+	hud.pick_closed.connect(_close_pick)
 	hud.save_now.connect(func():
 		_save_game()
 		audio.sfx("coins")
@@ -776,34 +833,12 @@ func _host() -> bool:
 	return not online or multiplayer.is_server()
 
 
-func _host_ips() -> Dictionary:
-	# "lan": alamat WiFi/router rumah; "vpn": alamat Tailscale (100.64.0.0/10).
-	var out := {"lan": [], "vpn": []}
-	for a in IP.get_local_addresses():
-		if ":" in a:
-			continue
-		var p := a.split(".")
-		if p.size() != 4:
-			continue
-		var o1 := int(p[0])
-		var o2 := int(p[1])
-		if o1 == 100 and o2 >= 64 and o2 <= 127:
-			out.vpn.append(a)
-		elif o1 == 192 and o2 == 168 or o1 == 10 or o1 == 172 and o2 >= 16 and o2 <= 31:
-			out.lan.append(a)
-	return out
-
-
 func _ip_text() -> String:
-	var ips := _host_ips()
-	var lines := []
-	if not ips.lan.is_empty():
-		lines.append("WiFi sama: %s" % ips.lan[0])
-	if not ips.vpn.is_empty():
-		lines.append("Tailscale: %s" % ips.vpn[0])
-	if lines.is_empty():
-		lines.append("127.0.0.1 (komputer ini saja)")
-	return "\n".join(lines)
+	# Alamat WiFi/router rumah untuk dibagikan ke teman.
+	for a in IP.get_local_addresses():
+		if a.begins_with("192.168.") or a.begins_with("10.") or a.begins_with("172."):
+			return a
+	return "127.0.0.1 (komputer ini saja)"
 
 
 func _on_single(n: String, m: int) -> void:
@@ -824,9 +859,8 @@ func _on_host(n: String, m: int) -> void:
 	my_name = n
 	my_model = m
 	_start_game()
-	hud.big_message("Server aktif! Teman bisa gabung ke IP:\n%s" % _ip_text(), 8)
-	for line in _ip_text().split("\n"):
-		hud.add_chat("", "IP server - " + line, true)
+	hud.big_message("Server aktif!\nTeman bisa gabung ke IP: %s" % _ip_text(), 8)
+	hud.add_chat("", "IP server: " + _ip_text(), true)
 
 
 func _on_join(n: String, m: int, ip: String) -> void:
@@ -879,6 +913,8 @@ func _start_game() -> void:
 	menu_cam.current = false
 	hud.minimap.main = self
 	hud.show_game()
+	_apply_season(true)
+	_set_tool(tool if tool in tools_owned else "")
 	_refresh_daily()
 	_update_ui()
 	if online:
@@ -1004,6 +1040,7 @@ func _refresh_daily() -> void:
 
 func _new_day() -> void:
 	_refresh_daily()
+	_apply_season(false)
 	if started:
 		toast("Hari %d dimulai! Misi harian baru" % day_index)
 		audio.sfx("daily")
@@ -1062,6 +1099,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		if event.keycode in [KEY_F, KEY_ESCAPE]:
 			_open_shop(false)
 		return
+	if hud.pick_panel.visible:
+		if event.keycode in [KEY_F, KEY_ESCAPE]:
+			_close_pick()
+		return
 	if hud.pause_panel.visible:
 		if event.keycode == KEY_ESCAPE:
 			hud.show_pause(false)
@@ -1078,7 +1119,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		hud.open_chat()
 		get_viewport().set_input_as_handled()
 		return
+	if event.keycode == KEY_TAB:
+		_cycle_tool()
+		return
 	if event.keycode == KEY_B:
+		if indoor != "":
+			toast("Tidak bisa membangun di dalam ruangan")
+			audio.sfx("error")
+			return
 		_set_build_mode("" if build_mode != "" else "menu")
 		audio.sfx("open")
 		return
@@ -1123,13 +1171,17 @@ func _find_action() -> Array:
 	# Mengembalikan [teks petunjuk, jenis aksi, indeks] untuk benda terdekat.
 	if player == null:
 		return ["", "", 0]
+	if indoor != "":
+		return _find_indoor_action()
 	var p := player.global_position
 	p.y = 0
+	if p.distance_to(WORKSHOP_DOOR) < 2.3:
+		return ["[F] Masuk bengkel", "enter_work", 0]
 	if p.distance_to(STALL_SPOT) < 2.8:
 		return ["[F] Buka kios (jual & beli)", "shop", 0]
 	for sp in sleep_spots:
 		if p.distance_to(sp) < 2.5:
-			return ["[F] Tidur", "sleep", 0]
+			return ["[F] Masuk rumah", "enter_home", 0]
 	if p.distance_to(HAY_SPOT) < 2.8:
 		return ["[F] Ambil jerami", "hay", 0]
 	if p.distance_to(COOP_SPOT) < 2.8:
@@ -1163,6 +1215,8 @@ func _find_action() -> Array:
 		var dist := p.distance_to(cr.node.position * Vector3(1, 0, 1))
 		if cr.ready and dist < 1.4:
 			return ["[F] Panen sayur", "harvest", i]
+		if tool == "bucket" and not cr.ready and (cr.planted or not cr.plot) and not cr.get("watered", false) and dist < 1.4:
+			return ["[F] Siram tanaman", "water", i]
 		if cr.plot and not cr.planted and dist < 1.8:
 			if inv["Bibit"] > 0:
 				return ["[F] Tanam bibit (sisa %d)" % inv["Bibit"], "plant", i]
@@ -1186,18 +1240,40 @@ func _on_action(kind: String, idx: int) -> void:
 			toast("Jerami +1")
 			audio.sfx("pickup")
 			progress("hay")
+		"enter_home":
+			_enter("home")
+		"enter_work":
+			_enter("work")
+		"exit":
+			_exit_building()
+		"bath":
+			hygiene = 100.0
+			energy = minf(100, energy + 5)
+			toast("Segar! Kebersihan penuh")
+			audio.sfx("milk")
+			progress("bath")
+		"cook":
+			_open_pick("cook")
+		"eat":
+			_open_pick("eat")
+		"craft":
+			_open_pick("craft")
+		"tools":
+			_open_pick("tools")
 		"wood":
-			inv["Kayu"] += 1
+			var gain := 2 if tool == "axe" else 1
+			inv["Kayu"] += gain
 			wood_cd[idx] = time + 20.0
-			energy = maxf(0, energy - 2)
+			energy = maxf(0, energy - (1 if tool == "axe" else 2))
+			hygiene = maxf(0, hygiene - 3)
 			var tn: Node3D = trees[idx].node
 			var tw := create_tween()
 			tw.tween_property(tn, "rotation:z", 0.08, 0.08)
 			tw.tween_property(tn, "rotation:z", -0.06, 0.1)
 			tw.tween_property(tn, "rotation:z", 0.0, 0.1)
-			toast("Kayu +1")
+			toast("Kayu +%d" % gain)
 			audio.sfx("eat")
-			progress("wood")
+			progress("wood", gain)
 		"shop":
 			_open_shop(true)
 		"sell":
@@ -1248,10 +1324,18 @@ func _server_act(kind: String, idx: int, extra: int, peer: int) -> void:
 			var cr: Dictionary = crops[idx]
 			if cr.ready:
 				cr.ready = false
+				cr.watered = false
 				cr.timer = 60.0
 				if cr.plot:
 					cr.planted = false
 				_crop_visual(cr)
+			else:
+				amount = -1
+		"water":
+			var cr: Dictionary = crops[idx]
+			if not cr.ready and not cr.get("watered", false):
+				cr.watered = true
+				cr.timer *= 0.5
 			else:
 				amount = -1
 		"plant":
@@ -1304,7 +1388,8 @@ func act_done(kind: String, idx: int, amount: int) -> void:
 func _act_done(kind: String, idx: int, amount: int) -> void:
 	if amount < 0:
 		var msg := {"sleep": "Belum malam. Tidur setelah jam 18:00", "harvest": "Sudah dipanen pemain lain",
-			"egg": "Telur sudah diambil", "milk_cow": "Susu belum siap", "feed_cow": "Sapi ini sudah kenyang"}
+			"egg": "Telur sudah diambil", "milk_cow": "Susu belum siap", "feed_cow": "Sapi ini sudah kenyang",
+			"water": "Tanaman ini sudah disiram"}
 		if msg.has(kind):
 			toast(msg[kind])
 			audio.sfx("error")
@@ -1324,6 +1409,7 @@ func _act_done(kind: String, idx: int, amount: int) -> void:
 		"milk_cow":
 			inv["Susu"] += 1
 			energy = maxf(0, energy - 4)
+			hygiene = maxf(0, hygiene - 2)
 			toast("Susu +1")
 			audio.sfx("milk")
 			progress("milk")
@@ -1332,12 +1418,19 @@ func _act_done(kind: String, idx: int, amount: int) -> void:
 			toast("Bibit ditanam! Tunggu sebentar...")
 			audio.sfx("pluck")
 			progress("plant")
-		"harvest":
-			inv["Sayur"] += 1
-			energy = maxf(0, energy - 2)
-			toast("Sayur +1")
+		"water":
+			hygiene = maxf(0, hygiene - 1)
+			toast("Tanaman disiram, tumbuh lebih cepat!")
 			audio.sfx("pluck")
-			progress("harvest")
+			progress("water")
+		"harvest":
+			var gain := 1 + (1 if tool == "hoe" else 0) + (1 if _season() == 2 else 0)
+			inv["Sayur"] += gain
+			energy = maxf(0, energy - 2)
+			hygiene = maxf(0, hygiene - 2)
+			toast("Sayur +%d" % gain)
+			audio.sfx("pluck")
+			progress("harvest", gain)
 		"feed_chicken":
 			inv["Sayur"] = maxi(0, inv["Sayur"] - 1)
 			toast("Ayam senang! Petok petok!")
@@ -1509,8 +1602,11 @@ func _update_build_ghost() -> void:
 func _update_farm(dt: float) -> void:
 	# dt = waktu game (ikut dipercepat dengan tombol T).
 	if started:
-		energy = maxf(0, energy - dt * 0.2)
+		var drain: float = SEASONS[_season()].drain * (1.5 if hygiene < 25 else 1.0)
+		energy = maxf(0, energy - dt * 0.2 * drain)
+		hygiene = maxf(0, hygiene - dt * 0.12)
 		player.speed_mult = 0.45 if energy <= 0 else 1.0
+	var grow: float = SEASONS[_season()].grow
 	if _host():
 		chicken_hunger = maxf(0, chicken_hunger - dt * 0.3)
 		if chicken_hunger > 30 and eggs < egg_meshes.size():
@@ -1520,18 +1616,18 @@ func _update_farm(dt: float) -> void:
 				eggs += 1
 				egg_timer = 25.0 * 6.0 / maxf(chickens.size(), 1)
 		for c in cows:
-			c.hunger = maxf(0, c.hunger - dt * 0.25)
+			c.hunger = maxf(0, c.hunger - dt * (0.33 if _season() == 3 else 0.25))
 			c.happy = maxf(0, c.happy - dt * (0.35 if c.hunger < 30 else 0.18))
 			c.milk_cd = maxf(0, c.milk_cd - dt)
 			c.heart = maxf(0, c.heart - dt / game_speed)
 		for cr in crops:
 			if not cr.ready and cr.planted:
-				cr.timer -= dt
+				cr.timer -= dt * grow
 				if cr.timer <= 0:
 					cr.ready = true
 					_crop_visual(cr)
 			elif not cr.ready and not cr.plot:
-				cr.timer -= dt
+				cr.timer -= dt * grow
 				if cr.timer <= 0:
 					cr.ready = true
 					cr.planted = true
@@ -1576,6 +1672,7 @@ func _update_farm(dt: float) -> void:
 	if not started:
 		return
 	hud.set_bar("energy", energy)
+	hud.set_bar("clean", hygiene)
 	hud.set_bar("cow_food", sum_food / cows.size())
 	hud.set_bar("cow_happy", sum_happy / cows.size())
 	hud.set_bar("chicken", chicken_hunger)
@@ -1585,7 +1682,9 @@ func _update_farm(dt: float) -> void:
 	if build_mode != "":
 		text = ""
 	if energy <= 0 and text == "":
-		text = "Kamu kelelahan! Makan apel atau tidur di rumah"
+		text = "Kamu kelelahan! Makan apel/masakan atau tidur di rumah"
+	elif hygiene < 25 and text == "" and indoor == "":
+		text = "Badanmu kotor, energi cepat habis. Mandi di rumah!"
 	hud.prompt(text)
 
 
@@ -1618,6 +1717,9 @@ func _update_day_night(delta: float) -> void:
 	env.fog_light_color = hor
 	env.ambient_light_energy = lerp(0.35, 1.0, d)
 
+	for wm in window_mats:
+		wm.emission = hor.lerp(Color(0.1, 0.12, 0.3), 1.0 - d)
+		wm.emission_energy_multiplier = lerpf(0.4, 1.4, d)
 	var night := 1.0 - d
 	for l in lamps:
 		l.light.light_energy = 2.5 * night
@@ -1641,6 +1743,9 @@ func _process(delta: float) -> void:
 		if save_timer <= 0:
 			save_timer = 30.0
 			_save_game()
+	if started:
+		_update_indoor_cam(delta)
+		weather.global_position = player.global_position * Vector3(1, 0, 1) + Vector3(0, 16, 0)
 	if not started:
 		# Kamera menu berputar pelan mengelilingi desa.
 		var a := time * 0.05
@@ -1799,7 +1904,8 @@ func _save_game() -> void:
 		return
 	_write(_player_save_path(), {"coins": coins, "inv": inv, "energy": energy,
 		"mission_index": mission_index, "mission_count": mission_count,
-		"daily_day": daily_day, "daily": daily, "model": my_model})
+		"daily_day": daily_day, "daily": daily, "model": my_model,
+		"hygiene": hygiene, "dishes": dishes, "tools": tools_owned, "tool": tool})
 	if _host():
 		var cow_stats := []
 		for c in cows:
@@ -1854,6 +1960,12 @@ func _load_player() -> void:
 	for k in inv:
 		inv[k] = saved_inv.get(k, inv[k])
 	energy = d.get("energy", 100.0)
+	hygiene = d.get("hygiene", 100.0)
+	var sd: Dictionary = d.get("dishes", {})
+	for k in dishes:
+		dishes[k] = sd.get(k, 0)
+	tools_owned = d.get("tools", [])
+	tool = d.get("tool", "")
 	mission_index = mini(d.get("mission_index", 0), MISSIONS.size())
 	mission_count = d.get("mission_count", 0)
 	if d.get("daily_day", -1) == day_index:
@@ -1880,3 +1992,457 @@ func _reset_save() -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
 		_save_game()
+
+
+# ---------- musim ----------
+var cur_season := -1
+var weather: GPUParticles3D
+
+
+func _season() -> int:
+	return int((day_index - 1) / SEASON_DAYS) % 4
+
+
+func _season_color(base: Color, si: int, i: int) -> Color:
+	match si:
+		1:  # panas: hijau tua kekuningan
+			return base.lerp(Color(0.55, 0.55, 0.15), 0.18)
+		2:  # gugur: jingga-merah bervariasi
+			var h := 0.03 + 0.07 * fmod(i * 0.37, 1.0)
+			return Color.from_hsv(h, clampf(base.s * 1.3 + 0.2, 0, 1), clampf(base.v * 1.25 + 0.1, 0, 1))
+		3:  # dingin: bersalju
+			return base.lerp(Color(0.9, 0.93, 0.98), 0.7)
+	return base
+
+
+func _apply_season(instant: bool) -> void:
+	var si := _season()
+	if si == cur_season:
+		return
+	var first := cur_season == -1
+	cur_season = si
+	var tw: Tween = null if instant else create_tween().set_parallel(true)
+	for i in foliage.size():
+		var m: BaseMaterial3D = foliage[i][0]
+		var target := _season_color(foliage[i][1], si, i)
+		if tw: tw.tween_property(m, "albedo_color", target, 3.0)
+		else: m.albedo_color = target
+	ground_mi.material_override = ground_mats[si]
+	env.fog_density = 0.009 if si == 3 else 0.004
+	_setup_weather(si)
+	if hud:
+		var sd: Dictionary = SEASONS[si]
+		hud.set_season(sd.short, sd.col)
+		if started and not first:
+			hud.big_message("%s tiba!\n%s" % [sd.name, sd.msg], 5)
+			audio.sfx("daily")
+
+
+func _make_weather() -> void:
+	weather = GPUParticles3D.new()
+	weather.visibility_aabb = AABB(Vector3(-40, -30, -40), Vector3(80, 45, 80))
+	weather.lifetime = 10.0
+	add_child(weather)
+
+
+func _setup_weather(si: int) -> void:
+	# Semi: kelopak bunga, Gugur: daun berjatuhan, Dingin: salju, Panas: cerah.
+	weather.emitting = si != 1
+	if si == 1:
+		return
+	var pm := ParticleProcessMaterial.new()
+	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	pm.emission_box_extents = Vector3(32, 1, 32)
+	pm.direction = Vector3(0.3, -1, 0.1)
+	pm.spread = 25
+	pm.initial_velocity_min = 0.5
+	pm.initial_velocity_max = 1.5
+	pm.gravity = Vector3(0.3, -1.6 if si == 3 else -1.0, 0)
+	pm.turbulence_enabled = true
+	pm.turbulence_noise_strength = 0.6
+	pm.angle_min = -180
+	pm.angle_max = 180
+	pm.angular_velocity_min = -90
+	pm.angular_velocity_max = 90
+	pm.scale_min = 0.7
+	pm.scale_max = 1.3
+	weather.process_material = pm
+	var q := QuadMesh.new()
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.vertex_color_use_as_albedo = true
+	if si == 3:
+		q.size = Vector2(0.14, 0.14)
+		weather.amount = 1600
+		pm.color = Color(1, 1, 1, 0.9)
+	elif si == 2:
+		q.size = Vector2(0.3, 0.2)
+		weather.amount = 260
+		var g := Gradient.new()
+		g.set_color(0, Color(0.95, 0.45, 0.12))
+		g.set_color(1, Color(0.85, 0.25, 0.1))
+		var gt := GradientTexture1D.new()
+		gt.gradient = g
+		pm.color_initial_ramp = gt
+	else:
+		q.size = Vector2(0.16, 0.16)
+		weather.amount = 160
+		pm.color = Color(1, 0.75, 0.85)
+	q.material = m
+	weather.draw_pass_1 = q
+	weather.restart()
+
+
+# ---------- di dalam bangunan ----------
+var indoor := ""                 # "", "home", "work"
+var indoor_cam: Camera3D
+var return_pos := Vector3.ZERO
+var saved_yaw := 0.0
+var window_mats: Array = []
+var stations := {"home": [], "work": []}
+var _aabb_cache := {}
+const FURN := 2.0
+
+
+func fmodel(path: String, pos: Vector3, s: float, rot := 0.0, parent: Node = self, collide := false) -> Node3D:
+	# Menempatkan model berdasarkan titik tengah alasnya (bukan titik asal aslinya).
+	var holder := Node3D.new()
+	holder.position = pos
+	holder.rotation.y = rot
+	parent.add_child(holder)
+	var m := model(path, Vector3.ZERO, s, 0, holder)
+	if not _aabb_cache.has(path):
+		var box_a := AABB()
+		var first := true
+		for mi in m.find_children("*", "MeshInstance3D", true, false):
+			var xf: Transform3D = m.global_transform.affine_inverse() * mi.global_transform
+			var a: AABB = xf * mi.get_aabb()
+			if first:
+				box_a = a
+				first = false
+			else:
+				box_a = box_a.merge(a)
+		_aabb_cache[path] = box_a
+	var bb: AABB = _aabb_cache[path]
+	var c := bb.get_center()
+	m.position = Vector3(-c.x, -bb.position.y, -c.z) * s
+	if collide:
+		collider(Vector3(0, bb.size.y * s / 2, 0), bb.size * s, holder)
+	return holder
+
+
+func _room(o: Vector3, w: float, d: float, wall: Color) -> void:
+	var floor_m := noise_mat(Color(0.42, 0.27, 0.15), Color(0.6, 0.41, 0.24), 1, 0.06)
+	floor_m.uv1_scale = Vector3(1.5, 10, 1)
+	var fb := box(o + Vector3(0, -0.25, 0), Vector3(w, 0.5, d), Color.WHITE)
+	(fb.get_child(0) as MeshInstance3D).material_override = floor_m
+	# Lantai gelap di sekeliling supaya ruangan tampak "mengambang" (gaya potongan).
+	var void_m := PlaneMesh.new()
+	void_m.size = Vector2(40, 32)
+	var vm := add_mesh(self, void_m, o + Vector3(0, -0.6, 0), Color(0.05, 0.04, 0.035))
+	(vm.material_override as StandardMaterial3D).shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	var h := 3.2
+	var t := 0.3
+	var wm := mat(wall)
+	for sd in [[Vector3(0, h / 2, -d / 2 - t / 2), Vector3(w + 2 * t, h, t)],
+			[Vector3(-w / 2 - t / 2, h / 2, 0), Vector3(t, h, d)],
+			[Vector3(w / 2 + t / 2, h / 2, 0), Vector3(t, h, d)]]:
+		var wb := box(o + sd[0], sd[1], wall)
+		(wb.get_child(0) as MeshInstance3D).material_override = wm
+		var cap: Vector3 = sd[1]
+		box(o + sd[0] + Vector3(0, h / 2 + 0.04, 0), Vector3(cap.x + 0.1, 0.08, cap.z + 0.1), Color(0.22, 0.14, 0.09), false)
+	# Dinding depen rendah (dipotong) + celah pintu di tengah.
+	var dark := Color(0.32, 0.2, 0.12)
+	for sx in [-1, 1]:
+		var seg := (w - 2.0) / 2
+		box(o + Vector3(sx * (1.0 + seg / 2), 0.3, d / 2 + t / 2), Vector3(seg, 0.6, t), dark)
+	# Balok kayu, list lantai, jendela.
+	for x in range(-int(w / 2), int(w / 2) + 1, 3):
+		box(o + Vector3(x, h / 2, -d / 2 + 0.05), Vector3(0.25, h, 0.12), dark, false)
+	box(o + Vector3(0, h - 0.15, -d / 2 + 0.06), Vector3(w, 0.3, 0.14), dark, false)
+	for sx in [-1, 1]:
+		box(o + Vector3(sx * (w / 2 - 0.06), h - 0.15, 0), Vector3(0.14, 0.3, d), dark, false)
+		box(o + Vector3(sx * (w / 2 - 0.05), 0.12, 0), Vector3(0.1, 0.24, d), dark, false)
+	box(o + Vector3(0, 0.12, -d / 2 + 0.05), Vector3(w, 0.24, 0.1), dark, false)
+	for wx in [-w / 4, w / 4]:
+		box(o + Vector3(wx, 1.9, -d / 2 + 0.02), Vector3(1.5, 1.3, 0.08), dark, false)
+		var pane := add_mesh(self, BoxMesh.new(), o + Vector3(wx, 1.9, -d / 2 + 0.08), Color(0.7, 0.85, 1))
+		pane.scale = Vector3(1.3, 1.1, 0.04)
+		var pm := pane.material_override as StandardMaterial3D
+		pm.emission_enabled = true
+		window_mats.append(pm)
+		box(o + Vector3(wx, 1.9, -d / 2 + 0.12), Vector3(0.08, 1.2, 0.04), dark, false)
+		box(o + Vector3(wx, 1.9, -d / 2 + 0.12), Vector3(1.4, 0.08, 0.04), dark, false)
+	# Lampu hangat.
+	for lx in [-w / 4, w / 4]:
+		var l := OmniLight3D.new()
+		l.position = o + Vector3(lx, 2.6, 0)
+		l.light_color = Color(1, 0.88, 0.7)
+		l.light_energy = 1.1
+		l.omni_range = 9
+		add_child(l)
+
+
+func _station(room: String, kind: String, text: String, pos: Vector3, r := 1.6) -> void:
+	stations[room].append({"kind": kind, "text": text, "pos": pos, "r": r})
+
+
+func _make_interiors() -> void:
+	# --- Rumah: kasur, bak mandi, dapur, meja makan ---
+	var o := HOME_IN
+	_room(o, 12, 9, Color(0.93, 0.85, 0.7))
+	fmodel("furniture/bedDouble", o + Vector3(-3.9, 0, -2.6), FURN, 0, self, true)
+	fmodel("furniture/cabinetBedDrawerTable", o + Vector3(-1.5, 0, -4.0), FURN, 0, self, true)
+	fmodel("furniture/lampSquareTable", o + Vector3(-1.5, 0.9, -4.0), FURN)
+	fmodel("furniture/bathtub", o + Vector3(-5.2, 0, 2.3), FURN, PI / 2, self, true)
+	fmodel("furniture/rugRound", o + Vector3(-3.6, 0.01, 2.4), FURN)
+	fmodel("furniture/bathroomSink", o + Vector3(-5.6, 0, -0.2), FURN, PI / 2, self, true)
+	fmodel("furniture/kitchenCabinet", o + Vector3(0.9, 0, -4.02), FURN, 0, self, true)
+	fmodel("furniture/kitchenStove", o + Vector3(1.78, 0, -4.02), FURN, 0, self, true)
+	fmodel("furniture/kitchenSink", o + Vector3(2.66, 0, -4.02), FURN, 0, self, true)
+	fmodel("furniture/kitchenFridge", o + Vector3(3.6, 0, -4.1), FURN, 0, self, true)
+	fmodel("furniture/hoodLarge", o + Vector3(1.78, 1.9, -4.15), FURN)
+	fmodel("food/pot-stew", o + Vector3(1.6, 0.92, -4.0), 1.6)
+	fmodel("furniture/tableCloth", o + Vector3(3.3, 0, 1.0), FURN, 0, self, true)
+	fmodel("furniture/chair", o + Vector3(2.8, 0, 2.1), FURN, PI)
+	fmodel("furniture/chair", o + Vector3(3.8, 0, 2.1), FURN, PI)
+	fmodel("furniture/chair", o + Vector3(3.3, 0, -0.1), FURN)
+	fmodel("food/bowl-soup", o + Vector3(3.0, 0.67, 1.1), 1.3)
+	fmodel("food/bread", o + Vector3(3.6, 0.67, 0.9), 1.4)
+	fmodel("furniture/rugRectangle", o + Vector3(0, 0.01, 0.8), FURN)
+	fmodel("furniture/bookcaseOpen", o + Vector3(5.5, 0, -1.6), FURN, -PI / 2, self, true)
+	fmodel("furniture/books", o + Vector3(5.45, 1.0, -1.6), FURN, -PI / 2)
+	fmodel("furniture/pottedPlant", o + Vector3(5.3, 0, 3.8), FURN)
+	fmodel("furniture/pottedPlant", o + Vector3(-0.3, 0, -3.9), FURN)
+	fmodel("furniture/lampRoundFloor", o + Vector3(5.4, 0, 0.3), FURN)
+	fmodel("furniture/loungeChair", o + Vector3(0.0, 0, -1.4), FURN * 0.9, 0, self, true)
+	fmodel("furniture/coatRack", o + Vector3(-1.6, 0, 3.9), FURN)
+	_station("home", "sleep", "[F] Tidur di kasur", o + Vector3(-3.9, 0, -0.6), 1.7)
+	_station("home", "bath", "[F] Mandi", o + Vector3(-4.1, 0, 2.3), 1.5)
+	_station("home", "cook", "[F] Masak di kompor", o + Vector3(1.8, 0, -3.2), 1.3)
+	_station("home", "eat", "[F] Makan di meja", o + Vector3(3.3, 0, 1.0), 1.9)
+	_station("home", "exit", "[F] Keluar rumah", o + Vector3(0, 0, 4.1), 1.0)
+	var hl := _status_label(self, o + Vector3(0, 3.6, -4.4))
+	hl.text = "Rumahmu"
+	hl.modulate = Color(1, 0.9, 0.5)
+
+	# --- Bengkel: meja kerja, rak pekakas ---
+	o = WORK_IN
+	_room(o, 10, 8, Color(0.8, 0.68, 0.52))
+	fmodel("survival/workbench", o + Vector3(-2.6, 0, -2.9), 6.5, 0, self, true)
+	fmodel("survival/workbench-anvil", o + Vector3(-0.3, 0, -3.0), 5.0, 0, self, true)
+	fmodel("survival/resource-planks", o + Vector3(-4.0, 0, -0.5), 5.0, 0.4, self, true)
+	fmodel("survival/resource-wood", o + Vector3(-4.0, 0, 1.6), 5.0, 1.2, self, true)
+	fmodel("survival/chest", o + Vector3(4.2, 0, 2.6), 5.0, -PI / 2, self, true)
+	fmodel("survival/barrel", o + Vector3(4.2, 0, 0.9), 3.5, 0, self, true)
+	fmodel("survival/box-large", o + Vector3(-4.1, 0, 3.0), 4.0, 0.2, self, true)
+	# Rak pekakas di dinding.
+	box(o + Vector3(2.8, 1.0, -3.85), Vector3(3.2, 2.0, 0.15), Color(0.42, 0.27, 0.15), false)
+	var tx := 1.6
+	for tp in ["survival/tool-axe", "survival/tool-hoe", "survival/tool-shovel", "survival/tool-pickaxe", "survival/tool-hammer"]:
+		var tn := fmodel(tp, o + Vector3(tx, 0.4, -3.65), 4.5)
+		tn.rotation.x = -0.15
+		tx += 0.6
+	fmodel("survival/bucket", o + Vector3(4.6, 0, -3.3), 4.0)
+	_station("work", "craft", "[F] Rakit pekakas", o + Vector3(-2.6, 0, -1.9), 1.5)
+	_station("work", "tools", "[F] Pilih pekakas", o + Vector3(2.8, 0, -2.8), 1.5)
+	_station("work", "exit", "[F] Keluar bengkel", o + Vector3(0, 0, 3.6), 1.0)
+	var wl := _status_label(self, o + Vector3(0, 3.6, -3.9))
+	wl.text = "Bengkel"
+	wl.modulate = Color(1, 0.9, 0.5)
+
+	indoor_cam = Camera3D.new()
+	indoor_cam.fov = 50
+	add_child(indoor_cam)
+
+
+func _room_origin(room: String) -> Vector3:
+	return HOME_IN if room == "home" else WORK_IN
+
+
+func _enter(room: String) -> void:
+	if indoor != "":
+		return
+	audio.sfx("door")
+	hud.fade(func():
+		indoor = room
+		return_pos = player.global_position
+		saved_yaw = player.cam_yaw
+		var o := _room_origin(room)
+		player.floor_y = o.y
+		player.global_position = o + Vector3(0, 0.1, 3.0 if room == "home" else 2.6)
+		player.velocity = Vector3.ZERO
+		player.model.rotation.y = 0
+		player.cam_yaw = 0
+		player.cam_locked = true
+		indoor_cam.current = true
+		_update_indoor_cam(1.0)
+		weather.visible = false
+		hud.minimap.visible = false)
+
+
+func _exit_building() -> void:
+	if indoor == "":
+		return
+	audio.sfx("door")
+	hud.fade(func():
+		indoor = ""
+		player.floor_y = 0.0
+		player.global_position = return_pos + Vector3(0, 0.1, 0)
+		player.velocity = Vector3.ZERO
+		player.cam_yaw = saved_yaw
+		player.cam_locked = false
+		player.cam.current = true
+		weather.visible = true
+		hud.minimap.visible = true)
+
+
+func _update_indoor_cam(delta: float) -> void:
+	if indoor == "":
+		return
+	var o := _room_origin(indoor)
+	var px := clampf(player.global_position.x - o.x, -3, 3) * 0.45
+	var target := o + Vector3(px, 9.5, 10.0)
+	indoor_cam.global_position = indoor_cam.global_position.lerp(target, minf(1.0, delta * 4))
+	indoor_cam.look_at(o + Vector3(px, 0, 0.6))
+
+
+func _find_indoor_action() -> Array:
+	var p := player.global_position
+	var best: Dictionary = {}
+	var best_d := 99.0
+	for st in stations[indoor]:
+		var d := Vector2(p.x, p.z).distance_to(Vector2(st.pos.x, st.pos.z))
+		if d < st.r and d < best_d:
+			best_d = d
+			best = st
+	if best.is_empty():
+		return ["", "", 0]
+	return [best.text, best.kind, 0]
+
+
+# ---------- masak, makan, rakit, pekakas ----------
+var pick_mode := ""
+
+
+func _need_text(need: Dictionary, coins_need := 0) -> String:
+	var parts := []
+	for k in need:
+		parts.append("%d %s" % [need[k], k])
+	if coins_need > 0:
+		parts.append("%d koin" % coins_need)
+	return "Butuh: " + ", ".join(PackedStringArray(parts))
+
+
+func _has(need: Dictionary, coins_need := 0) -> bool:
+	for k in need:
+		if inv.get(k, 0) < need[k]:
+			return false
+	return coins >= coins_need
+
+
+func _open_pick(mode: String) -> void:
+	pick_mode = mode
+	var rows := []
+	match mode:
+		"cook":
+			for id in RECIPES:
+				var r: Dictionary = RECIPES[id]
+				rows.append({"id": id, "icon": r.icon, "name": r.name, "desc": "Energi +%d  -  punya %d" % [r.energy, dishes[id]],
+					"need": _need_text(r.need), "btn": "Masak", "ok": _has(r.need)})
+			hud.show_pick("DAPUR", "Pilih masakan. Bahan diambil dari tasmu.", rows)
+		"eat":
+			for id in RECIPES:
+				if dishes[id] > 0:
+					var r: Dictionary = RECIPES[id]
+					rows.append({"id": id, "icon": r.icon, "name": "%s  x%d" % [r.name, dishes[id]],
+						"desc": "Energi +%d" % r.energy, "need": "", "btn": "Makan", "ok": true})
+			hud.show_pick("MEJA MAKAN", "Energi: %d%%. Masak dulu di kompor kalau belum ada makanan." % int(energy), rows)
+		"craft":
+			for id in TOOLS:
+				var t: Dictionary = TOOLS[id]
+				var owned: bool = id in tools_owned
+				rows.append({"id": id, "icon": t.icon, "name": t.name + ("  (sudah punya)" if owned else ""), "desc": t.desc,
+					"need": "" if owned else _need_text(t.need, t.coins), "btn": "Rakit", "ok": not owned and _has(t.need, t.coins)})
+			hud.show_pick("MEJA KERJA", "Rakit pekakas dari kayu. Kayu: %d  -  Koin: %d" % [inv["Kayu"], coins], rows)
+		"tools":
+			rows.append({"id": "", "icon": "", "name": "Tangan Kosong" + ("  (dipakai)" if tool == "" else ""),
+				"desc": "Tanpa pekakas", "need": "", "btn": "Pakai", "ok": tool != ""})
+			for id in tools_owned:
+				var t: Dictionary = TOOLS[id]
+				rows.append({"id": id, "icon": t.icon, "name": t.name + ("  (dipakai)" if tool == id else ""),
+					"desc": t.desc, "need": "", "btn": "Pakai", "ok": tool != id})
+			hud.show_pick("RAK PEKAKAS", "Pilih pekakas yang dibawa. Tab = ganti cepat di mana saja.", rows)
+	audio.sfx("open")
+
+
+func _close_pick() -> void:
+	pick_mode = ""
+	hud.hide_pick()
+
+
+func _on_pick(id: String) -> void:
+	match pick_mode:
+		"cook":
+			var r: Dictionary = RECIPES[id]
+			if not _has(r.need):
+				audio.sfx("error")
+				return
+			for k in r.need:
+				inv[k] -= r.need[k]
+			dishes[id] += 1
+			toast("%s matang!" % r.name)
+			audio.sfx("eat")
+			player.do_action()
+			progress("cook")
+		"eat":
+			if dishes.get(id, 0) <= 0:
+				return
+			var r: Dictionary = RECIPES[id]
+			dishes[id] -= 1
+			energy = minf(100, energy + r.energy)
+			toast("Nyam, %s! Energi +%d" % [r.name, r.energy])
+			audio.sfx("pluck")
+			progress("eat_dish")
+		"craft":
+			var t: Dictionary = TOOLS[id]
+			if id in tools_owned or not _has(t.need, t.coins):
+				audio.sfx("error")
+				return
+			for k in t.need:
+				inv[k] -= t.need[k]
+			coins -= t.coins
+			tools_owned.append(id)
+			_set_tool(id)
+			toast("%s selesai dirakit & langsung dipakai!" % t.name)
+			audio.sfx("mission")
+			player.do_action()
+			progress("craft")
+		"tools":
+			_set_tool(id)
+			audio.sfx("cloth")
+	_update_ui()
+	if pick_mode != "":
+		_open_pick(pick_mode)
+
+
+func _set_tool(id: String) -> void:
+	tool = id
+	if id == "":
+		hud.set_tool("Tangan", "")
+	else:
+		hud.set_tool(TOOLS[id].name, TOOLS[id].icon)
+
+
+func _cycle_tool() -> void:
+	if tools_owned.is_empty():
+		toast("Belum punya pekakas. Rakit di bengkel!")
+		audio.sfx("error")
+		return
+	var order := [""] + tools_owned
+	var i := order.find(tool)
+	_set_tool(order[(i + 1) % order.size()])
+	toast("Pekakas: %s" % ("Tangan" if tool == "" else TOOLS[tool].name))
+	audio.sfx("cloth")

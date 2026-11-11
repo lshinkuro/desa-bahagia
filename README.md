@@ -17,8 +17,12 @@ Berjalan di Mac Intel maupun Apple Silicon (universal).
 ## Fitur
 
 - Siklus siang-malam, lentera menyala di malam hari
+- 4 musim (Semi, Panas, Gugur, Dingin — masing-masing 3 hari) dengan warna pohon, tanah, cuaca (kelopak bunga, daun gugur, salju) & efek berbeda
+- Masuk rumah (kamera berubah jadi tampak atas): tidur di kasur, mandi, masak di kompor, makan di meja
+- Bengkel: rakit pekakas (Kapak, Cangkul, Ember Siram) & pilih pekakas di rak
+- Status energi & kebersihan — badan kotor bikin energi cepat habis
 - Rawat sapi & ayam: beri makan, elus, perah susu, ambil telur
-- 12 misi utama + 3 misi harian acak setiap hari (hadiah koin)
+- 16 misi utama + 3 misi harian acak setiap hari (hadiah koin)
 - Kios desa: jual hasil panen, beli bibit, roti, ayam & sapi baru
 - Tebang pohon untuk kayu, bangun petak kebun & rumah kayu sendiri
 - Multiplayer LAN (sampai 8 pemain) dengan chat
@@ -31,25 +35,20 @@ Berjalan di Mac Intel maupun Apple Silicon (universal).
 |---|---|
 | WASD / panah | Jalan |
 | Spasi | Lompat |
-| F | Aksi (panen, beri makan, buka kios, tebang pohon, …) |
+| F | Aksi (masuk/keluar bangunan, panen, masak, mandi, tidur, tebang pohon, …) |
 | B | Menu bangun (1 = petak kebun, 2 = rumah kayu) |
 | Enter | Chat |
+| Tab | Ganti pekakas |
 | Mouse / Q E | Putar kamera |
 | T (tahan) | Percepat waktu (hanya host) |
 | H | Tampilkan/sembunyikan bantuan |
-| Esc | Lepas kursor mouse |
+| Esc | Menu jeda (simpan, keluar ke menu, tutup game) |
 
 ## Main bareng (multiplayer)
 
 1. Satu orang memilih **Buat Server (Host)** — IP-nya muncul di layar.
 2. Teman di WiFi yang sama mengetik IP tersebut lalu **Gabung**.
 3. Main lewat internet butuh port forwarding UDP **7777** di router host.
-
-### Main bareng beda WiFi (Tailscale)
-1. Host & teman install [Tailscale](https://tailscale.com) (gratis), login, lalu host mengundang teman ke jaringannya.
-2. Host klik **Buat Server** — game menampilkan IP `Tailscale: 100.x.x.x` (juga muncul di chat & menu Esc).
-3. Teman memasukkan IP `100.x.x.x` itu di kolom **Gabung**.
-4. Pastikan semua memakai versi game yang sama. Jika macOS menanyakan izin koneksi masuk, pilih **Allow**.
 
 ## Membuat versi baru (DMG otomatis)
 
@@ -72,6 +71,7 @@ GODOT=/path/ke/Godot.app/Contents/MacOS/Godot scripts/build_dmg.sh 1.1.0
 - 3D, UI, efek suara: [Kenney.nl](https://kenney.nl) — CC0
 - Musik "Hot Spring Town": [OpenGameArt](https://opengameart.org/node/155383) — CC0
 - Suara sapi: [qubodup, OpenGameArt](https://opengameart.org/content/sci-fi-aliens-and-cows-pack) — CC0
-- Font Fredoka: [Google Fonts](https://github.com/google/fonts/tree/main/ofl/fredoka) — SIL OFL 1.1
+- Furnitur rumah: [Kenney Furniture Kit](https://kenney.nl/assets/furniture-kit) — CC0
+- Font Cinzel & Alegreya Sans: [Google Fonts](https://fonts.google.com) — SIL OFL 1.1
 
 Lisensi lengkap tiap paket ada di `assets/LICENSE-*.txt`.

@@ -13,6 +13,8 @@ signal reset_save
 signal save_now
 signal logout
 signal quit_game
+signal pick_chosen(id: String)
+signal pick_closed
 
 const PREFS := "user://settings.cfg"
 
@@ -71,6 +73,14 @@ var version_text := ""
 var pause_panel: PanelContainer
 var pause_info: Label
 var sliders := {}
+var pick_panel: PanelContainer
+var pick_title: Label
+var pick_sub: Label
+var pick_list: VBoxContainer
+var season_label: Label
+var tool_icon: TextureRect
+var tool_label: Label
+var fade_rect: ColorRect
 
 
 # ---------- tema ----------
@@ -214,8 +224,14 @@ func setup(audio_node: Node) -> void:
 	_build_shop()
 	_build_chat()
 	_build_pause()
+	_build_pick()
 	_build_menu()
 	_load_prefs()
+	fade_rect = ColorRect.new()
+	fade_rect.color = Color(0.02, 0.02, 0.03, 0)
+	fade_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	fade_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(fade_rect)
 
 
 func _build_hud() -> void:
@@ -241,6 +257,9 @@ func _build_hud() -> void:
 	coin_row.add_child(_icon("coin", 26))
 	coin_label = _label("0", 22, COIN)
 	coin_row.add_child(coin_label)
+	coin_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	season_label = _title("SEMI", 15, Color(1, 0.72, 0.82))
+	coin_row.add_child(season_label)
 	cv.add_child(coin_row)
 
 	# Kiri: misi utama & harian.
@@ -284,6 +303,7 @@ func _build_hud() -> void:
 	sv.add_theme_constant_override("separation", 3)
 	sp.add_child(sv)
 	for item in [["energy", "Energi Petani", Color(1, 0.75, 0.15)],
+			["clean", "Kebersihan", Color(0.45, 0.78, 1)],
 			["cow_food", "Sapi Kenyang", Color(0.45, 0.8, 0.3)],
 			["cow_happy", "Sapi Senang", Color(1, 0.5, 0.65)],
 			["chicken", "Ayam Kenyang", Color(1, 0.6, 0.25)]]:
@@ -307,6 +327,21 @@ func _build_hud() -> void:
 	hb.add_theme_constant_override("separation", 8)
 	hb.alignment = BoxContainer.ALIGNMENT_CENTER
 	hud.add_child(hb)
+	var ts := PanelContainer.new()
+	ts.add_theme_stylebox_override("panel", _poly(Color(0.2, 0.14, 0.06, 0.95), 12, GOLD, 3, 4))
+	ts.custom_minimum_size = Vector2(76, 76)
+	ts.tooltip_text = "Pekakas (Tab untuk ganti)"
+	hb.add_child(ts)
+	var tov := Control.new()
+	ts.add_child(tov)
+	tool_icon = _icon("tool_axe", 44)
+	tool_icon.position = Vector2(12, -4)
+	tov.add_child(tool_icon)
+	tool_label = _label("Tangan", 12, GOLD, true)
+	tool_label.position = Vector2(-4, 40)
+	tool_label.custom_minimum_size = Vector2(76, 0)
+	tool_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	tov.add_child(tool_label)
 	for item in ITEM_ICONS:
 		var slot := PanelContainer.new()
 		slot.add_theme_stylebox_override("panel", _poly(STONE, 12, GOLD_DK, 2, 4))
@@ -388,7 +423,7 @@ func _build_hud() -> void:
 	help_panel.offset_left = 16
 	help_panel.offset_bottom = -14
 	hud.add_child(help_panel)
-	help_panel.add_child(_label("WASD  jalan\nSpasi  lompat\nF  aksi / tebang pohon\nB  menu bangun\nM  peta besar/kecil\nEnter  chat\nMouse / Q E  kamera\nT (tahan)  percepat waktu*\nH  sembunyikan bantuan\nEsc  menu jeda / keluar\n* hanya host", 14))
+	help_panel.add_child(_label("WASD  jalan\nSpasi  lompat\nF  aksi / tebang pohon\nB  menu bangun\nM  peta besar/kecil\nEnter  chat\nTab  ganti pekakas\nMouse / Q E  kamera\nT (tahan)  percepat waktu*\nH  sembunyikan bantuan\nEsc  menu jeda / keluar\n* hanya host", 14))
 
 
 func _build_build_panel() -> void:
@@ -547,6 +582,26 @@ func set_menu_status(text: String) -> void:
 	menu_status.text = text
 
 
+func set_season(name: String, col: Color) -> void:
+	season_label.text = name.to_upper()
+	season_label.add_theme_color_override("font_color", col)
+
+
+func set_tool(name: String, icon: String) -> void:
+	tool_label.text = name
+	tool_icon.visible = icon != ""
+	if icon != "":
+		tool_icon.texture = load("res://assets/icons/%s.png" % icon)
+
+
+func fade(cb: Callable) -> void:
+	# Layar menggelap sebentar saat pindah tempat (masuk/keluar bangunan).
+	var tw := create_tween()
+	tw.tween_property(fade_rect, "color:a", 1.0, 0.25)
+	tw.tween_callback(cb)
+	tw.tween_property(fade_rect, "color:a", 0.0, 0.35)
+
+
 func set_clock(day: int, hours: float, is_day: bool, coins: int) -> void:
 	day_label.text = "HARI %d  -  %s" % [day, "SIANG" if is_day else "MALAM"]
 	time_label.text = "%02d:%02d" % [int(hours), int(fmod(hours, 1.0) * 60)]
@@ -692,7 +747,7 @@ func show_shop(open: bool, coins := 0, sell_value := 0, sell_count := 0) -> void
 
 
 func is_busy() -> bool:
-	return shop_panel.visible or chat_input.visible or pause_panel.visible
+	return shop_panel.visible or chat_input.visible or pause_panel.visible or pick_panel.visible
 
 
 # ---------- chat ----------
@@ -806,3 +861,66 @@ func _load_prefs() -> void:
 		var val := float(cf.get_value("audio", bus, sliders[bus].value))
 		sliders[bus].set_value_no_signal(val)
 		if audio: audio.set_volume(bus, val)
+
+
+# ---------- panel pilihan (masak, makan, rakit, pekakas) ----------
+func _build_pick() -> void:
+	pick_panel = PanelContainer.new()
+	pick_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	pick_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	pick_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+	pick_panel.custom_minimum_size = Vector2(520, 0)
+	pick_panel.add_theme_stylebox_override("panel", _poly(Color(0.08, 0.1, 0.13, 0.99), 18, GOLD, 3, 18))
+	hud.add_child(pick_panel)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 8)
+	pick_panel.add_child(v)
+	pick_title = _title("", 24)
+	v.add_child(pick_title)
+	pick_sub = _label("", 14, MUTED)
+	pick_sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(pick_sub)
+	pick_list = VBoxContainer.new()
+	pick_list.add_theme_constant_override("separation", 8)
+	v.add_child(pick_list)
+	v.add_child(_button("Tutup  [F]", func(): pick_closed.emit()))
+	pick_panel.visible = false
+
+
+func show_pick(title: String, sub: String, rows: Array) -> void:
+	big_panel.visible = false
+	# rows: [{id, icon, name, desc, need, btn, ok}]
+	pick_title.text = title
+	pick_sub.text = sub
+	for c in pick_list.get_children():
+		c.queue_free()
+	for r in rows:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 10)
+		var ic := _icon(r.icon, 44) if r.icon != "" else Control.new()
+		ic.custom_minimum_size = Vector2(44, 44)
+		row.add_child(ic)
+		var info := VBoxContainer.new()
+		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		info.add_theme_constant_override("separation", -2)
+		info.add_child(_label(r.name, 18))
+		info.add_child(_label(r.desc, 13, MUTED))
+		if r.need != "":
+			info.add_child(_label(r.need, 13, COIN if r.ok else Color(0.95, 0.5, 0.45)))
+		row.add_child(info)
+		var id: String = r.id
+		var b := _button(r.btn, func(): pick_chosen.emit(id))
+		b.custom_minimum_size = Vector2(110, 40)
+		b.disabled = not r.ok
+		row.add_child(b)
+		pick_list.add_child(row)
+	if rows.is_empty():
+		pick_list.add_child(_label("(kosong)", 15, MUTED))
+	if not pick_panel.visible:
+		pick_panel.visible = true
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+
+func hide_pick() -> void:
+	pick_panel.visible = false
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
