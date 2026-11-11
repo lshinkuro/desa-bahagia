@@ -1,0 +1,6 @@
+# Godot
+.godot/
+*.tmp
+# Hasil build (DMG diunggah ke GitHub Releases, bukan ke repo)
+build/
+.DS_Store

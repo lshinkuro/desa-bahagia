@@ -1,0 +1,52 @@
+# Setiap tag versi (mis. v1.1.0) di-push, GitHub membangun DMG macOS
+# dan mengunggahnya ke halaman Releases secara otomatis.
+name: Rilis DMG macOS
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  GODOT_VERSION: 4.7.2
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unduh Godot & export templates
+        run: |
+          curl -sL -o godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_macos.universal.zip"
+          unzip -q godot.zip
+          curl -sL -o templates.tpz "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          unzip -q templates.tpz "templates/macos.zip" "templates/version.txt"
+          T="$HOME/Library/Application Support/Godot/export_templates/${GODOT_VERSION}.stable"
+          mkdir -p "$T"
+          cp templates/macos.zip templates/version.txt "$T/"
+
+      - name: Build DMG
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          [[ "$GITHUB_REF_TYPE" == "tag" ]] || VERSION="$(sed -n 's/^config\/version="\(.*\)"/\1/p' project.godot)"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          GODOT="$PWD/Godot.app/Contents/MacOS/Godot" scripts/build_dmg.sh "$VERSION"
+
+      - name: Unggah ke GitHub Releases
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "Desa Bahagia $GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" "build/DesaBahagia-${VERSION}.dmg" --clobber
+
+      - name: Simpan DMG sebagai artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DesaBahagia-${{ env.VERSION }}-macOS
+          path: build/*.dmg
